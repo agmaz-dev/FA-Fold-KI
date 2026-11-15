@@ -696,7 +696,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                     Text("Stimmen-Motor", fontWeight = FontWeight.Medium)
                     Row(Modifier.fillMaxWidth().clickable { ttsEngine = "supertonic" }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = ttsEngine == "supertonic", onClick = { ttsEngine = "supertonic" })
-                        Text("Supertonic – Elena, Tessa, Caleb (natürlich, offline)")
+                        Text("Supertonic – Tessa & Caleb (natürlich, offline)")
                     }
                     Row(Modifier.fillMaxWidth().clickable { ttsEngine = "android" }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = ttsEngine == "android", onClick = { ttsEngine = "android" })

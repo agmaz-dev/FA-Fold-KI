@@ -8,7 +8,7 @@ Chat-App für Android (optimiert für das Galaxy Z Fold7):
 - **Briefe & PDF:** Schnellaktionen „Antwortschreiben“, „Widerspruch“, „Zusammenfassen“, „Brief schreiben“; jede Antwort als PDF speichern oder teilen.
 - **🌐 Websuche (Globus-Knopf):** Claude sucht selbst im Internet; Gemini Nano bekommt Wikipedia-Artikel und aktuelle Schlagzeilen (Google News) dazu.
 - **🎙️ Sprache:** Sprachmodus (Knopf rechts bei leerem Feld) wie in der Claude-App, Mikrofon zum Diktieren, Vorlesen jeder Antwort.
-- **Supertonic-Stimmen** Elena, Tessa, Caleb (offline, wie in FA-KI-Desktop): Einstellungen → Stimmen-Motor → „Supertonic einrichten“ (einmalig ca. 250 MB).
+- **Supertonic-Stimmen Tessa und Caleb** (offline, wie in FA-KI-Desktop): Einstellungen → Stimmen-Motor → „Supertonic einrichten“ (einmalig ca. 250 MB).
 - Chat-Verlauf, Seitenleiste (aufgeklappt dauerhaft sichtbar), hell/dunkel.
 
 ## APK bekommen

@@ -43,13 +43,12 @@ class Supertonic(context: Context) {
         private const val REV = "aafc6e32416a594460b32413efc49d7fe4ce6d46"
         private const val REPO = "https://huggingface.co/supertone-oss-archive/supertonic-3/resolve/"
 
-        /** Own voice names -> style id in the model (same as on the desktop). */
+        /** The two voices used in all of the user's apps: Tessa and Caleb (style ids as on the desktop). */
         val VOICES = linkedMapOf(
-            "elena" to ("F2" to "Elena (weiblich)"),
             "tessa" to ("F5" to "Tessa (weiblich)"),
             "caleb" to ("M2" to "Caleb (männlich)"),
         )
-        const val DEFAULT_VOICE = "elena"
+        const val DEFAULT_VOICE = "tessa"
 
         private val MODEL_FILES = listOf(
             "onnx/tts.json",
