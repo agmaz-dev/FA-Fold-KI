@@ -53,14 +53,29 @@ class NanoEngine {
     }
 
     private fun buildPrompt(system: String, history: List<ChatMessage>): String {
-        val lines = history.filter { !it.isError }.takeLast(8).map { m ->
+        val turns = history.filter { !it.isError }.takeLast(6)
+        val lines = turns.map { m ->
             val who = if (m.role == Role.USER) "Nutzer" else "Assistent"
             "$who: ${m.text.take(1500)}"
         }.toMutableList()
         // Keep the prompt within Nano's small context: drop the oldest turns first.
-        while (lines.size > 1 && lines.sumOf { it.length } > 3500) lines.removeAt(0)
+        while (lines.size > 1 && lines.sumOf { it.length } > 3000) lines.removeAt(0)
+
+        // Text of attached documents/photos (latest ones first), limited to fit Nano.
+        val docs = StringBuilder()
+        var budget = 6000
+        history.asReversed().flatMap { it.attachments }.forEach { a ->
+            if (budget <= 0 || a.text.isBlank()) return@forEach
+            val t = a.text.take(budget)
+            budget -= t.length
+            docs.append("--- Anhang: ${a.name} ---\n").append(t).append("\n\n")
+        }
+        val noText = history.flatMap { it.attachments }.filter { it.text.isBlank() }
+
         return buildString {
             append(system).append("\n\n")
+            if (docs.isNotEmpty()) append("Inhalt der angehängten Dateien:\n").append(docs)
+            if (noText.isNotEmpty()) append("(Aus ${noText.joinToString { it.name }} konnte kein Text gelesen werden.)\n\n")
             lines.forEach { append(it).append("\n") }
             append("Assistent:")
         }

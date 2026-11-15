@@ -1,5 +1,29 @@
 package de.foldki.app.ui
 
+import android.graphics.BitmapFactory
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import de.foldki.app.data.Attachment
+import de.foldki.app.export.PdfExporter
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -169,37 +193,6 @@ private fun Sidebar(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, onPi
     }
 }
 
-@Composable
-private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, onSettings: () -> Unit) {
-    val messages = ui.current?.messages.orEmpty()
-    val listState = rememberLazyListState()
-    val lastLen = messages.lastOrNull()?.text?.length ?: 0
-    LaunchedEffect(messages.size, lastLen) {
-        if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1, Int.MAX_VALUE / 2)
-    }
-
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-        TopBar(ui, vm, showMenu, onMenu)
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
-            if (messages.isEmpty()) {
-                EmptyState(ui, vm, onSettings)
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize().widthIn(max = 760.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                ) {
-                    items(messages, key = { it.id }) { m ->
-                        MessageRow(m, typing = ui.generating && m === messages.last() && m.role == Role.ASSISTANT)
-                    }
-                }
-            }
-        }
-        InputBar(ui, onSend = vm::send, onStop = vm::stop)
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit) {
@@ -267,9 +260,124 @@ private fun EmptyState(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit) {
 }
 
 @Composable
-private fun MessageRow(m: ChatMessage, typing: Boolean) {
+private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, onSettings: () -> Unit) {
+    val context = LocalContext.current
+    val messages = ui.current?.messages.orEmpty()
+    val listState = rememberLazyListState()
+    val lastLen = messages.lastOrNull()?.text?.length ?: 0
+    LaunchedEffect(messages.size, lastLen) {
+        if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1, Int.MAX_VALUE / 2)
+    }
+    LaunchedEffect(ui.notice) {
+        ui.notice?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); vm.notify(null) }
+    }
+
+    // "Save as PDF": remember the text, then let the user choose where to store the file.
+    var pdfText by remember { mutableStateOf("") }
+    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)!!.use { PdfExporter.write(pdfText, it) }
+            }.onSuccess { vm.notify("PDF gespeichert") }
+                .onFailure { vm.notify("PDF konnte nicht gespeichert werden: ${it.message}") }
+        }
+    }
+    val actions = MessageActions(
+        copy = { text ->
+            (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                .setPrimaryClip(android.content.ClipData.newPlainText("Text", text))
+            vm.notify("Kopiert")
+        },
+        savePdf = { text -> pdfText = text; savePdf.launch(pdfName(text)) },
+        sharePdf = { text ->
+            runCatching { PdfExporter.share(context, text, pdfName(text)) }
+                .onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") }
+        },
+    )
+
+    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
+        TopBar(ui, vm, showMenu, onMenu)
+        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            if (messages.isEmpty()) {
+                EmptyState(ui, vm, onSettings)
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().widthIn(max = 760.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    items(messages, key = { it.id }) { m ->
+                        MessageRow(m, typing = ui.generating && m === messages.last() && m.role == Role.ASSISTANT, actions = actions)
+                    }
+                }
+            }
+        }
+        InputBar(ui, vm)
+    }
+}
+
+private fun pdfName(text: String): String {
+    val first = PdfExporter.clean(text).lines().firstOrNull { it.startsWith("Betreff") }
+        ?: "Fold-KI-Dokument"
+    val base = first.removePrefix("Betreff:").trim().take(40).replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "").trim()
+    return (base.ifBlank { "Fold-KI-Dokument" }) + ".pdf"
+}
+
+private class MessageActions(
+    val copy: (String) -> Unit,
+    val savePdf: (String) -> Unit,
+    val sharePdf: (String) -> Unit,
+)
+
+/** Ready-made requests, e.g. a reply letter to an uploaded letter. */
+private val QUICK_ACTIONS = listOf(
+    "Antwortschreiben" to "Schreibe ein formelles Antwortschreiben (Gegenschreiben) auf das angehängte Schreiben. Gehe auf alle Punkte ein.",
+    "Widerspruch" to "Schreibe einen formellen, fristgerechten Widerspruch gegen das angehängte Schreiben mit sachlicher Begründung.",
+    "Zusammenfassen" to "Fasse das angehängte Dokument verständlich zusammen: Worum geht es, was wird von mir verlangt, welche Fristen gibt es?",
+    "Brief schreiben" to "Schreibe einen formellen Brief. Mein Anliegen: ",
+)
+
+@Composable
+private fun Thumbnail(a: Attachment, size: Int) {
+    val bmp = remember(a.path) {
+        runCatching {
+            BitmapFactory.decodeFile(a.path, BitmapFactory.Options().apply { inSampleSize = 4 })?.asImageBitmap()
+        }.getOrNull()
+    }
+    if (a.isImage && bmp != null) {
+        Image(
+            bmp, a.name, contentScale = ContentScale.Crop,
+            modifier = Modifier.size(size.dp).clip(RoundedCornerShape(10.dp)),
+        )
+    } else {
+        Box(
+            Modifier.size(size.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.PictureAsPdf, null, tint = MaterialTheme.colorScheme.primary)
+                Text("PDF", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions) {
     if (m.role == Role.USER) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+            if (m.attachments.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 6.dp)) {
+                    m.attachments.forEach { a ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
+                            Thumbnail(a, 72)
+                            Text(a.name, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(18.dp),
@@ -280,7 +388,8 @@ private fun MessageRow(m: ChatMessage, typing: Boolean) {
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
-            val shown = if (m.text.isEmpty() && typing) "…" else m.text
+            val clean = PdfExporter.clean(m.text)
+            val shown = if (m.text.isEmpty() && typing) "…" else clean
             SelectionContainer {
                 Text(
                     shown,
@@ -288,21 +397,70 @@ private fun MessageRow(m: ChatMessage, typing: Boolean) {
                     color = if (m.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
                 )
             }
-            if (!typing && m.engine != null) {
-                Text(
-                    if (m.engine == Engine.NANO) "Gemini Nano · offline" else "Claude · online",
-                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+            if (!typing && !m.isError && m.text.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                    IconButton(onClick = { actions.copy(clean) }) {
+                        Icon(Icons.Default.ContentCopy, "Kopieren", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { actions.savePdf(clean) }) {
+                        Icon(Icons.Default.PictureAsPdf, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp)); Text("Als PDF")
+                    }
+                    IconButton(onClick = { actions.sharePdf(clean) }) {
+                        Icon(Icons.Default.Share, "PDF teilen", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (m.engine != null) Text(
+                        if (m.engine == Engine.NANO) "Gemini Nano · offline" else "Claude · online",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun InputBar(ui: UiState, onSend: (String) -> Unit, onStop: () -> Unit) {
+private fun InputBar(ui: UiState, vm: ChatViewModel) {
+    val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
-    Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+    var plusOpen by remember { mutableStateOf(false) }
+    var cameraFile by remember { mutableStateOf<java.io.File?>(null) }
+
+    val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
+        uris.forEach { vm.addAttachment(it) }
+    }
+    val pickPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        uris.forEach { vm.addAttachment(it) }
+    }
+    val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val f = cameraFile
+        if (ok && f != null) {
+            vm.addAttachment(android.net.Uri.fromFile(f))
+        }
+    }
+
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Quick actions (reply letter, objection, …)
+        val showQuick = ui.pending.isNotEmpty() || ui.current == null
+        if (showQuick && !ui.generating) {
+            Row(
+                Modifier.widthIn(max = 760.dp).fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                QUICK_ACTIONS.forEach { (label, prompt) ->
+                    AssistChip(
+                        onClick = {
+                            if (prompt.endsWith(": ")) text = prompt + text
+                            else { vm.send(prompt + if (text.isNotBlank()) "\nZusätzliche Hinweise: $text" else ""); text = "" }
+                        },
+                        label = { Text(label) },
+                        leadingIcon = { Icon(Icons.Default.Description, null, modifier = Modifier.size(16.dp)) },
+                    )
+                }
+            }
+        }
+
         Surface(
             shape = RoundedCornerShape(24.dp),
             color = MaterialTheme.colorScheme.surface,
@@ -310,28 +468,84 @@ private fun InputBar(ui: UiState, onSend: (String) -> Unit, onStop: () -> Unit) 
             shadowElevation = 2.dp,
             modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
         ) {
-            Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(6.dp)) {
-                TextField(
-                    value = text, onValueChange = { text = it },
-                    placeholder = { Text("Antworten…") },
-                    maxLines = 6,
-                    modifier = Modifier.weight(1f),
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                    ),
-                )
-                if (ui.generating) {
-                    FilledIconButton(onClick = onStop, modifier = Modifier.padding(4.dp)) { Icon(Icons.Default.Stop, "Stopp") }
-                } else {
-                    FilledIconButton(
-                        onClick = { onSend(text); text = "" },
-                        enabled = text.isNotBlank(),
-                        modifier = Modifier.padding(4.dp),
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    ) { Icon(Icons.AutoMirrored.Filled.Send, "Senden") }
+            Column {
+                if (ui.pending.isNotEmpty() || ui.importing) {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, top = 10.dp, end = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ui.pending.forEach { a ->
+                            Box {
+                                Thumbnail(a, 60)
+                                Box(
+                                    Modifier.align(Alignment.TopEnd).padding(2.dp).size(20.dp).clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                                        .clickable { vm.removePending(a.id) },
+                                    contentAlignment = Alignment.Center,
+                                ) { Icon(Icons.Default.Close, "Entfernen", tint = MaterialTheme.colorScheme.surface, modifier = Modifier.size(14.dp)) }
+                            }
+                        }
+                        if (ui.importing) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                            Text("Lese Datei…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(6.dp)) {
+                    Box {
+                        IconButton(onClick = { plusOpen = true }, modifier = Modifier.padding(bottom = 4.dp)) {
+                            Icon(Icons.Default.Add, "Datei hinzufügen")
+                        }
+                        DropdownMenu(expanded = plusOpen, onDismissRequest = { plusOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Foto aus Galerie") },
+                                leadingIcon = { Icon(Icons.Default.Image, null) },
+                                onClick = {
+                                    plusOpen = false
+                                    pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Foto aufnehmen") },
+                                leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
+                                onClick = {
+                                    plusOpen = false
+                                    val f = vm.attachments.newCameraFile()
+                                    cameraFile = f
+                                    val uri = FileProvider.getUriForFile(context, context.packageName + ".files", f)
+                                    runCatching { takePhoto.launch(uri) }.onFailure { vm.notify("Keine Kamera-App gefunden") }
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("PDF-Dokument") },
+                                leadingIcon = { Icon(Icons.Default.PictureAsPdf, null) },
+                                onClick = { plusOpen = false; pickPdf.launch(arrayOf("application/pdf")) },
+                            )
+                        }
+                    }
+                    TextField(
+                        value = text, onValueChange = { text = it },
+                        placeholder = { Text(if (ui.pending.isEmpty()) "Antworten…" else "Frage zum Anhang…") },
+                        maxLines = 6,
+                        modifier = Modifier.weight(1f),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = MaterialTheme.colorScheme.surface,
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                            focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                            unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        ),
+                    )
+                    if (ui.generating) {
+                        FilledIconButton(onClick = vm::stop, modifier = Modifier.padding(4.dp)) { Icon(Icons.Default.Stop, "Stopp") }
+                    } else {
+                        FilledIconButton(
+                            onClick = { vm.send(text); text = "" },
+                            enabled = (text.isNotBlank() || ui.pending.isNotEmpty()) && !ui.importing,
+                            modifier = Modifier.padding(4.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        ) { Icon(Icons.AutoMirrored.Filled.Send, "Senden") }
+                    }
                 }
             }
         }
@@ -343,6 +557,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
     var key by remember { mutableStateOf(vm.settings.apiKey) }
     var model by remember { mutableStateOf(vm.settings.claudeModel) }
     var system by remember { mutableStateOf(vm.settings.systemPrompt) }
+    var sender by remember { mutableStateOf(vm.settings.sender) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Einstellungen") },
@@ -375,6 +590,13 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                 item {
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
+                        value = sender, onValueChange = { sender = it },
+                        label = { Text("Mein Absender für Briefe") },
+                        placeholder = { Text("Vorname Nachname\nStraße Nr.\nPLZ Ort") },
+                        minLines = 3, modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
                         value = system, onValueChange = { system = it },
                         label = { Text("Anweisung an die KI (System-Prompt)") },
                         minLines = 3, modifier = Modifier.fillMaxWidth(),
@@ -382,7 +604,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); onDismiss() }) { Text("Speichern") } },
+        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); onDismiss() }) { Text("Speichern") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
 }

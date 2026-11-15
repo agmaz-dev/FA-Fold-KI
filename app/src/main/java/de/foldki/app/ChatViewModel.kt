@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.foldki.app.ai.ClaudeEngine
 import de.foldki.app.ai.NanoEngine
+import de.foldki.app.data.Attachment
+import de.foldki.app.data.Attachments
 import de.foldki.app.data.ChatMessage
 import de.foldki.app.data.ChatStore
 import de.foldki.app.data.Conversation
@@ -28,6 +30,9 @@ data class UiState(
     val nanoStatus: String = "Prüfe Gemini Nano…",
     val nanoReady: Boolean = false,
     val nanoDownloadable: Boolean = false,
+    val pending: List<Attachment> = emptyList(),
+    val importing: Boolean = false,
+    val notice: String? = null,
 ) {
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
@@ -37,6 +42,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val settings = Settings(app)
     private val nano = NanoEngine()
     private val claude = ClaudeEngine()
+    val attachments = Attachments(app)
     private var job: Job? = null
 
     private val _ui = MutableStateFlow(
@@ -77,6 +83,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setEngine(e: Engine) { settings.engine = e; _ui.update { it.copy(engine = e) } }
 
+    fun addAttachment(uri: android.net.Uri) = viewModelScope.launch {
+        _ui.update { it.copy(importing = true) }
+        try {
+            val a = attachments.import(uri)
+            _ui.update { it.copy(pending = it.pending + a) }
+        } catch (e: Throwable) {
+            _ui.update { it.copy(notice = "Datei konnte nicht geladen werden: ${e.message ?: e.javaClass.simpleName}") }
+        } finally {
+            _ui.update { it.copy(importing = false) }
+        }
+    }
+
+    fun removePending(id: String) = _ui.update { s -> s.copy(pending = s.pending.filterNot { it.id == id }) }
+
+    fun notify(text: String?) = _ui.update { it.copy(notice = text) }
+
+    fun saveSender(sender: String) { settings.sender = sender }
+
     fun saveSettings(apiKey: String, model: String, system: String) {
         settings.apiKey = apiKey
         settings.claudeModel = model
@@ -89,6 +113,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun open(id: String) { stop(); _ui.update { it.copy(currentId = id) } }
 
     fun delete(id: String) {
+        _ui.value.conversations.firstOrNull { it.id == id }?.messages?.flatMap { it.attachments }
+            ?.forEach { runCatching { java.io.File(it.path).delete() } }
         _ui.update { s ->
             s.copy(
                 conversations = s.conversations.filterNot { it.id == id },
@@ -101,20 +127,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun stop() { job?.cancel(); job = null; _ui.update { it.copy(generating = false) } }
 
     fun send(text: String) {
-        val prompt = text.trim()
-        if (prompt.isEmpty() || _ui.value.generating) return
+        val pendingFiles = _ui.value.pending
+        val prompt = text.trim().ifEmpty { if (pendingFiles.isNotEmpty()) "Was steht in diesem Dokument? Fasse es kurz zusammen." else "" }
+        if (prompt.isEmpty() || _ui.value.generating || _ui.value.importing) return
         val engine = _ui.value.engine
 
         // Create conversation if needed and append user + empty assistant message.
         var conv = _ui.value.current ?: Conversation(title = prompt.take(40))
-        val userMsg = ChatMessage(role = Role.USER, text = prompt)
+        val userMsg = ChatMessage(role = Role.USER, text = prompt, attachments = pendingFiles)
         val botMsg = ChatMessage(role = Role.ASSISTANT, text = "", engine = engine)
         conv = conv.copy(messages = conv.messages + userMsg + botMsg, updatedAt = System.currentTimeMillis())
         upsert(conv)
-        _ui.update { it.copy(currentId = conv.id, generating = true) }
+        _ui.update { it.copy(currentId = conv.id, generating = true, pending = emptyList()) }
 
         val history = conv.messages.dropLast(1)
-        val system = settings.systemPrompt
+        val system = buildSystem()
         job = viewModelScope.launch {
             try {
                 val flow = when (engine) {
@@ -137,6 +164,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 persist()
             }
         }
+    }
+
+    private fun buildSystem(): String = buildString {
+        append(settings.systemPrompt).append("\n")
+        append(Settings.LETTER_RULES).append("\n")
+        append("Heutiges Datum: ").append(java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())).append("\n")
+        if (settings.sender.isNotBlank()) append("Absender des Nutzers (für Briefe):\n").append(settings.sender).append("\n")
     }
 
     private fun editMessage(convId: String, msgId: String, f: (ChatMessage) -> ChatMessage) {

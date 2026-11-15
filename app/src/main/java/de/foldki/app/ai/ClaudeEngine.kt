@@ -3,7 +3,15 @@ package de.foldki.app.ai
 import com.anthropic.client.AnthropicClient
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.anthropic.core.JsonValue
+import com.anthropic.models.messages.Base64ImageSource
+import com.anthropic.models.messages.Base64PdfSource
+import com.anthropic.models.messages.ContentBlockParam
+import com.anthropic.models.messages.DocumentBlockParam
+import com.anthropic.models.messages.ImageBlockParam
 import com.anthropic.models.messages.MessageCreateParams
+import com.anthropic.models.messages.TextBlockParam
+import android.util.Base64
+import java.io.File
 import de.foldki.app.data.ChatMessage
 import de.foldki.app.data.Role
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +47,11 @@ class ClaudeEngine {
         val turns = history.filter { !it.isError && it.text.isNotBlank() }
             .dropWhile { it.role != Role.USER }
         turns.forEach { m ->
-            if (m.role == Role.USER) builder.addUserMessage(m.text) else builder.addAssistantMessage(m.text)
+            when {
+                m.role == Role.ASSISTANT -> builder.addAssistantMessage(m.text)
+                m.attachments.isEmpty() -> builder.addUserMessage(m.text)
+                else -> builder.addUserMessageOfContentBlockParams(userBlocks(m))
+            }
         }
 
         var refused = false
@@ -61,4 +73,35 @@ class ClaudeEngine {
         }
         if (refused) emit("\n\n(Claude hat diese Anfrage abgelehnt.)")
     }.flowOn(Dispatchers.IO)
+
+    /** Photos as image blocks, PDFs as document blocks, then the user's text. */
+    private fun userBlocks(m: ChatMessage): List<ContentBlockParam> {
+        val blocks = mutableListOf<ContentBlockParam>()
+        m.attachments.forEach { a ->
+            val f = File(a.path)
+            if (!f.exists()) return@forEach
+            val b64 = Base64.encodeToString(f.readBytes(), Base64.NO_WRAP)
+            if (a.isPdf) {
+                blocks += ContentBlockParam.ofDocument(
+                    DocumentBlockParam.builder()
+                        .source(Base64PdfSource.builder().data(b64).build())
+                        .title(a.name)
+                        .build()
+                )
+            } else if (a.isImage) {
+                blocks += ContentBlockParam.ofImage(
+                    ImageBlockParam.builder()
+                        .source(
+                            Base64ImageSource.builder()
+                                .data(b64)
+                                .mediaType(Base64ImageSource.MediaType.IMAGE_JPEG)
+                                .build()
+                        )
+                        .build()
+                )
+            }
+        }
+        blocks += ContentBlockParam.ofText(TextBlockParam.builder().text(m.text.ifBlank { "Siehe Anhang." }).build())
+        return blocks
+    }
 }

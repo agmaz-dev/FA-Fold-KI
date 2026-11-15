@@ -28,6 +28,16 @@ class ChatStore(context: Context) {
                             engine = m.optString("engine").takeIf { it.isNotEmpty() }
                                 ?.let { runCatching { Engine.valueOf(it) }.getOrNull() },
                             isError = m.optBoolean("isError"),
+                            attachments = m.optJSONArray("attachments")?.let { a ->
+                                (0 until a.length()).map { k ->
+                                    val x = a.getJSONObject(k)
+                                    Attachment(
+                                        id = x.getString("id"), name = x.getString("name"),
+                                        mime = x.getString("mime"), path = x.getString("path"),
+                                        text = x.optString("text"),
+                                    )
+                                }
+                            } ?: emptyList(),
                         )
                     },
                 )
@@ -46,6 +56,14 @@ class ChatStore(context: Context) {
                 msgs.put(JSONObject().apply {
                     put("id", m.id); put("role", m.role.name); put("text", m.text)
                     put("engine", m.engine?.name ?: ""); put("isError", m.isError)
+                    put("attachments", JSONArray().apply {
+                        m.attachments.forEach { a ->
+                            put(JSONObject().apply {
+                                put("id", a.id); put("name", a.name); put("mime", a.mime)
+                                put("path", a.path); put("text", a.text)
+                            })
+                        }
+                    })
                 })
             }
             arr.put(JSONObject().apply {
