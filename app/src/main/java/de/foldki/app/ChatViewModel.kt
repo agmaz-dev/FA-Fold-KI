@@ -38,6 +38,8 @@ data class UiState(
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
 
+const val READY = "Sprachfunktion ist eingerichtet."
+
 private const val VOICE_RULES = """
 Das Gespräch läuft gerade per Sprache: Deine Antwort wird vorgelesen.
 Antworte kurz und natürlich gesprochen (meist 1 bis 4 Sätze), ohne Listen, Tabellen, Emojis oder Sonderzeichen."""
@@ -49,23 +51,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val claude = ClaudeEngine()
     val attachments = Attachments(app)
     val voice = de.foldki.app.voice.VoiceController(app).apply {
-        voiceName = settings.ttsVoice; rate = settings.ttsRate; pitch = settings.ttsPitch
-        engine = settings.ttsEngine; supertonicVoice = settings.stVoice
+        rate = settings.ttsRate; supertonicVoice = settings.stVoice
     }
 
-    // Supertonic setup (one-time ~250 MB download)
-    private val _stStatus = MutableStateFlow(if (voice.supertonic.isReady) "Supertonic ist eingerichtet." else "Noch nicht eingerichtet.")
+    // One-time setup of the voice function: Tessa & Caleb (Supertonic) + speech recognition (Whisper).
+    private val _stStatus = MutableStateFlow(if (voice.isReady) READY else "Noch nicht eingerichtet.")
     val stStatus: StateFlow<String> = _stStatus.asStateFlow()
     private val _stBusy = MutableStateFlow(false)
     val stBusy: StateFlow<Boolean> = _stBusy.asStateFlow()
     private var stJob: Job? = null
 
-    fun setupSupertonic() {
+    fun setupVoice() {
         if (_stBusy.value) return
         _stBusy.value = true
         stJob = viewModelScope.launch {
             try {
                 voice.supertonic.prepare { line -> _stStatus.value = line }
+                voice.whisper.prepare { line -> _stStatus.value = line }
+                _stStatus.value = READY
             } catch (e: kotlinx.coroutines.CancellationException) {
                 _stStatus.value = "Abgebrochen."
             } catch (e: Throwable) {
@@ -76,19 +79,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun cancelSupertonic() { stJob?.cancel() }
+    fun cancelVoiceSetup() { stJob?.cancel() }
 
-    fun saveSupertonic(engine: String, stVoice: String) {
-        settings.ttsEngine = engine; settings.stVoice = stVoice
-        voice.engine = engine; voice.supertonicVoice = stVoice
+    fun saveVoice(stVoice: String, rate: Float) {
+        settings.stVoice = stVoice; settings.ttsRate = rate
+        voice.supertonicVoice = stVoice; voice.rate = rate
     }
 
     override fun onCleared() { voice.release() }
 
-    fun saveVoice(name: String, rate: Float, pitch: Float) {
-        settings.ttsVoice = name; settings.ttsRate = rate; settings.ttsPitch = pitch
-        voice.voiceName = name; voice.rate = rate; voice.pitch = pitch
-    }
     private var job: Job? = null
 
     private val _ui = MutableStateFlow(

@@ -114,6 +114,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.foldki.app.ChatViewModel
+import de.foldki.app.READY
 import de.foldki.app.UiState
 import de.foldki.app.data.ChatMessage
 import de.foldki.app.data.Engine
@@ -294,27 +295,11 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
         afterMicGranted = null
     }
     val withMic: (() -> Unit) -> Unit = { action ->
-        if (!voice.recognitionAvailable) vm.notify("Auf diesem Gerät ist keine Spracherkennung verfügbar.")
+        if (!voice.isReady) { vm.notify("Bitte zuerst unter Einstellungen die Sprachfunktion einrichten (Tessa & Caleb)."); onSettings() }
         else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) action()
         else { afterMicGranted = action; micPermission.launch(Manifest.permission.RECORD_AUDIO) }
     }
     var speakingId by remember { mutableStateOf<String?>(null) }
-
-    // Last resort for speech input: Google's own voice dialog (works even if the in-app recognizer fails).
-    var dialogCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
-    val systemRecognizer = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
-        val text = res.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
-        dialogCallback?.invoke(text)
-        dialogCallback = null
-    }
-    val openDialog: ((String) -> Unit) -> Unit = { cb ->
-        dialogCallback = cb
-        runCatching { systemRecognizer.launch(voice.recognizeIntent()) }.onFailure {
-            dialogCallback = null
-            vm.notify("Keine Spracherkennung gefunden. Bitte die Google-App installieren oder aktualisieren.")
-            cb("")
-        }
-    }
 
     // "Save as PDF": remember the text, then let the user choose where to store the file.
     var pdfText by remember { mutableStateOf("") }
@@ -339,13 +324,14 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
         },
         speak = { id, text ->
             if (speakingId == id) { voice.stopSpeaking(); speakingId = null }
+            else if (!voice.supertonic.isReady) { vm.notify("Bitte zuerst unter Einstellungen die Sprachfunktion einrichten (Tessa & Caleb)."); onSettings() }
             else { speakingId = id; voice.speak(text) { if (speakingId == id) speakingId = null } }
         },
         speakingId = speakingId,
     )
 
     if (voiceMode) {
-        VoiceOverlay(ui, vm, voice, openDialog, onClose = { voiceMode = false })
+        VoiceOverlay(ui, vm, voice, onClose = { voiceMode = false })
         return
     }
 
@@ -367,17 +353,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
                 }
             }
         }
-        InputBar(ui, vm, voice, withMic, openDialog, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
-    }
-}
-
-/** Google voice names often hint at the gender; Samsung names use f/m. */
-private fun voiceGender(name: String): String {
-    val n = name.lowercase()
-    return when {
-        n.contains("female") || Regex("smtf\\d|-f\\d|#female").containsMatchIn(n) -> " (weiblich)"
-        n.contains("male") || Regex("smtm\\d|-m\\d|#male").containsMatchIn(n) -> " (männlich)"
-        else -> ""
+        InputBar(ui, vm, voice, withMic, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
     }
 }
 
@@ -497,7 +473,7 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
 @Composable
 private fun InputBar(
     ui: UiState, vm: ChatViewModel, voice: VoiceController,
-    withMic: (() -> Unit) -> Unit, openDialog: ((String) -> Unit) -> Unit, onVoiceMode: () -> Unit,
+    withMic: (() -> Unit) -> Unit, onVoiceMode: () -> Unit,
 ) {
     val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
@@ -510,7 +486,6 @@ private fun InputBar(
                 onPartial = { text = (before + " " + it).trim() },
                 onFinal = { t -> text = (before + " " + t).trim(); dictating = false },
                 onError = { msg -> dictating = false; vm.notify(msg) },
-                onNeedsDialog = { openDialog { t -> text = (before + " " + t).trim(); dictating = false } },
             )
         }
     }
@@ -669,16 +644,12 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
     var model by remember { mutableStateOf(vm.settings.claudeModel) }
     var system by remember { mutableStateOf(vm.settings.systemPrompt) }
     var sender by remember { mutableStateOf(vm.settings.sender) }
-    var voiceName by remember { mutableStateOf(vm.settings.ttsVoice) }
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
-    var pitch by remember { mutableFloatStateOf(vm.settings.ttsPitch) }
-    val voices = remember { vm.voice.germanVoices() }
-    var ttsEngine by remember { mutableStateOf(vm.settings.ttsEngine) }
     var stVoice by remember { mutableStateOf(vm.settings.stVoice) }
     val stStatus by vm.stStatus.collectAsStateWithLifecycle()
     val stBusy by vm.stBusy.collectAsStateWithLifecycle()
-    val stReady = stStatus == "Supertonic ist eingerichtet." || vm.voice.supertonic.isReady
-    DisposableEffect(Unit) { onDispose { vm.voice.stopSpeaking(); vm.voice.resetVoice() } }
+    val stReady = stStatus == READY || vm.voice.isReady
+    DisposableEffect(Unit) { onDispose { vm.voice.stopSpeaking() } }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Einstellungen") },
@@ -710,80 +681,37 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                 }
                 item {
                     Spacer(Modifier.height(16.dp))
-                    Text("Stimmen-Motor", fontWeight = FontWeight.Medium)
-                    Row(Modifier.fillMaxWidth().clickable { ttsEngine = "supertonic" }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = ttsEngine == "supertonic", onClick = { ttsEngine = "supertonic" })
-                        Text("Supertonic – Tessa & Caleb (natürlich, offline)")
-                    }
-                    Row(Modifier.fillMaxWidth().clickable { ttsEngine = "android" }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = ttsEngine == "android", onClick = { ttsEngine = "android" })
-                        Text("Android-Stimme (Samsung/Google)")
-                    }
-                }
-                if (ttsEngine == "supertonic") {
-                    item {
-                        Text(stStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (stBusy) {
-                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                                TextButton(onClick = vm::cancelSupertonic) { Text("Abbrechen") }
-                            } else {
-                                TextButton(onClick = vm::setupSupertonic) {
-                                    Text(if (stReady) "Neu laden / reparieren" else "Supertonic einrichten (ca. 250 MB)")
-                                }
+                    Text("Sprache: Tessa & Caleb", fontWeight = FontWeight.Medium)
+                    Text(
+                        "Sprechen und Zuhören laufen komplett auf dem Handy (Supertonic + Whisper), ohne Samsung- oder Google-Dienste.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(stStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (stBusy) {
+                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            TextButton(onClick = vm::cancelVoiceSetup) { Text("Abbrechen") }
+                        } else {
+                            TextButton(onClick = vm::setupVoice) {
+                                Text(if (stReady) "Neu laden / reparieren" else "Sprachfunktion einrichten (ca. 500 MB)")
                             }
                         }
                     }
-                    items(Supertonic.VOICES.keys.toList()) { key ->
-                        val label = Supertonic.VOICES.getValue(key).second
-                        Row(Modifier.fillMaxWidth().clickable { stVoice = key }, verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = stVoice == key, onClick = { stVoice = key })
-                            Text(label, modifier = Modifier.weight(1f))
-                            IconButton(
-                                enabled = stReady && !stBusy,
-                                onClick = { vm.voice.rate = rate; vm.voice.previewSupertonic(key) { vm.notify("Supertonic: $it") } },
-                            ) { Icon(Icons.Default.PlayArrow, "Probehören") }
-                        }
-                    }
-                    item {
-                        Text("Tempo: ${"%.1f".format(rate)}×", fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-                        Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.6f..1.6f)
+                }
+                items(Supertonic.VOICES.keys.toList()) { key ->
+                    val label = Supertonic.VOICES.getValue(key).second
+                    Row(Modifier.fillMaxWidth().clickable { stVoice = key }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = stVoice == key, onClick = { stVoice = key })
+                        Text(label, modifier = Modifier.weight(1f))
+                        IconButton(
+                            enabled = vm.voice.supertonic.isReady && !stBusy,
+                            onClick = { vm.voice.rate = rate; vm.voice.previewSupertonic(key) { vm.notify("Stimme: $it") } },
+                        ) { Icon(Icons.Default.PlayArrow, "Probehören") }
                     }
                 }
-                if (ttsEngine == "android") item {
-                    Spacer(Modifier.height(8.dp))
-                    Text("Stimme zum Vorlesen", fontWeight = FontWeight.Medium)
-                    Row(Modifier.fillMaxWidth().clickable { voiceName = "" }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = voiceName.isBlank(), onClick = { voiceName = "" })
-                        Text("Standard (Android-Einstellung)")
-                    }
-                    if (voices.isEmpty()) Text(
-                        "Keine deutschen Stimmen gefunden. Installiere sie unter Einstellungen → Allgemeine Verwaltung → Text-zu-Sprache.",
-                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (ttsEngine == "android") items(voices.size) { i ->
-                    val v = voices[i]
-                    Row(Modifier.fillMaxWidth().clickable { voiceName = v.name }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = voiceName == v.name, onClick = { voiceName = v.name })
-                        Column(Modifier.weight(1f)) {
-                            Text("Stimme ${i + 1}" + voiceGender(v.name), fontSize = 14.sp)
-                            Text(
-                                (if (v.isNetworkConnectionRequired) "online" else "offline") + " · " + v.name,
-                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        IconButton(onClick = { vm.voice.rate = rate; vm.voice.pitch = pitch; vm.voice.preview(v) }) {
-                            Icon(Icons.Default.PlayArrow, "Probehören")
-                        }
-                    }
-                }
-                if (ttsEngine == "android") item {
+                item {
                     Text("Tempo: ${"%.1f".format(rate)}×", fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-                    Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.5f..2f)
-                    Text("Tonhöhe: ${"%.1f".format(pitch)}", fontSize = 13.sp)
-                    Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.5f..2f)
+                    Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.6f..1.6f)
                 }
                 item {
                     Spacer(Modifier.height(12.dp))
@@ -802,7 +730,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); vm.saveVoice(voiceName, rate, pitch); vm.saveSupertonic(ttsEngine, stVoice); onDismiss() }) { Text("Speichern") } },
+        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); vm.saveVoice(stVoice, rate); onDismiss() }) { Text("Speichern") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
 }

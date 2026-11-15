@@ -59,7 +59,7 @@ private enum class Phase { LISTENING, THINKING, SPEAKING, PAUSED }
 
 /** Full-screen voice conversation: listen → ask the AI → read the answer aloud → listen again. */
 @Composable
-fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, openDialog: ((String) -> Unit) -> Unit, onClose: () -> Unit) {
+fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose: () -> Unit) {
     var phase by remember { mutableStateOf(Phase.PAUSED) }
     var heard by remember { mutableStateOf("") }
     var info by remember { mutableStateOf("") }
@@ -73,11 +73,10 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, openDia
             else { heard = t; phase = Phase.THINKING; vm.send(t, voice = true) }
         }
         voice.listen(
-            onPartial = { heard = it },
+            onPartial = { info = ""; heard = it; phase = Phase.THINKING },
             onFinal = handleFinal,
             onError = { msg -> level = 0f; phase = Phase.PAUSED; info = msg },
             onLevel = { level = it },
-            onNeedsDialog = { openDialog(handleFinal) },
         )
     }
 
