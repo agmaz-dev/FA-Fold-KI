@@ -10,6 +10,8 @@ import com.anthropic.models.messages.DocumentBlockParam
 import com.anthropic.models.messages.ImageBlockParam
 import com.anthropic.models.messages.MessageCreateParams
 import com.anthropic.models.messages.TextBlockParam
+import com.anthropic.models.messages.WebSearchTool20250305
+import com.anthropic.models.messages.WebSearchTool20260209
 import android.util.Base64
 import java.io.File
 import de.foldki.app.data.ChatMessage
@@ -32,7 +34,7 @@ class ClaudeEngine {
         return client!!
     }
 
-    fun reply(apiKey: String, model: String, system: String, history: List<ChatMessage>): Flow<String> = flow {
+    fun reply(apiKey: String, model: String, system: String, history: List<ChatMessage>, webSearch: Boolean): Flow<String> = flow {
         require(apiKey.isNotBlank()) { "Kein Claude-API-Schlüssel. Bitte in den Einstellungen eintragen." }
 
         val builder = MessageCreateParams.builder()
@@ -42,6 +44,12 @@ class ClaudeEngine {
             // If a safety classifier declines, let the server retry on a suitable fallback model.
             .putAdditionalHeader("anthropic-beta", "server-side-fallback-2026-07-01")
             .putAdditionalBodyProperty("fallbacks", JsonValue.from("default"))
+
+        // Claude searches the web itself (server-side tool). Haiku only supports the basic variant.
+        if (webSearch) {
+            if (model.contains("haiku")) builder.addTool(WebSearchTool20250305.builder().maxUses(5L).build())
+            else builder.addTool(WebSearchTool20260209.builder().maxUses(5L).build())
+        }
 
         // The API needs alternating turns starting with the user.
         val turns = history.filter { !it.isError && it.text.isNotBlank() }

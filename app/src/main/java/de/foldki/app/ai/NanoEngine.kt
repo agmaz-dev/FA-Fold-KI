@@ -44,15 +44,29 @@ class NanoEngine {
      * The Prompt API is single-turn, so recent chat history is packed into one prompt.
      * Nano has a small context window, so only the last few turns are kept.
      */
-    fun reply(system: String, history: List<ChatMessage>): Flow<String> = flow {
-        val prompt = buildPrompt(system, history)
+    fun reply(system: String, history: List<ChatMessage>, webSearch: Boolean): Flow<String> = flow {
+        var web = ""
+        if (webSearch) {
+            val question = history.lastOrNull { it.role == Role.USER }?.text.orEmpty()
+            val terms = complete(
+                "Gib nur 2 bis 5 Suchbegriffe (ohne Erklärung, eine Zeile) für eine Internetsuche zu dieser Frage aus:\n$question"
+            ).lines().firstOrNull { it.isNotBlank() }?.trim()?.trim('"', '.', '*')?.take(100).orEmpty()
+            web = WebLookup.search(terms.ifBlank { question.take(100) })
+        }
+        val prompt = buildPrompt(system, history, web)
         model.generateContentStream(prompt).collect { chunk ->
             val text = chunk.candidates.firstOrNull()?.text.orEmpty()
             if (text.isNotEmpty()) emit(text)
         }
     }
 
-    private fun buildPrompt(system: String, history: List<ChatMessage>): String {
+    private suspend fun complete(prompt: String): String {
+        val sb = StringBuilder()
+        model.generateContentStream(prompt).collect { sb.append(it.candidates.firstOrNull()?.text.orEmpty()) }
+        return sb.toString()
+    }
+
+    private fun buildPrompt(system: String, history: List<ChatMessage>, web: String = ""): String {
         val turns = history.filter { !it.isError }.takeLast(6)
         val lines = turns.map { m ->
             val who = if (m.role == Role.USER) "Nutzer" else "Assistent"
@@ -63,7 +77,7 @@ class NanoEngine {
 
         // Text of attached documents/photos (latest ones first), limited to fit Nano.
         val docs = StringBuilder()
-        var budget = 6000
+        var budget = 4500
         history.asReversed().flatMap { it.attachments }.forEach { a ->
             if (budget <= 0 || a.text.isBlank()) return@forEach
             val t = a.text.take(budget)
@@ -75,6 +89,8 @@ class NanoEngine {
         return buildString {
             append(system).append("\n\n")
             if (docs.isNotEmpty()) append("Inhalt der angehängten Dateien:\n").append(docs)
+            if (web.isNotBlank()) append("Ergebnisse einer Internetsuche (nutze sie für deine Antwort und nenne die Quelle, z. B. Wikipedia):\n")
+                .append(web.take(3000)).append("\n\n")
             if (noText.isNotEmpty()) append("(Aus ${noText.joinToString { it.name }} konnte kein Text gelesen werden.)\n\n")
             lines.forEach { append(it).append("\n") }
             append("Assistent:")

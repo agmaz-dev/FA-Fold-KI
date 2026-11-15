@@ -25,6 +25,7 @@ data class ChatMessage(
     val engine: Engine? = null,
     val isError: Boolean = false,
     val attachments: List<Attachment> = emptyList(),
+    val web: Boolean = false,
 )
 
 data class Conversation(

@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
@@ -389,7 +390,7 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
     } else {
         Column(Modifier.fillMaxWidth()) {
             val clean = PdfExporter.clean(m.text)
-            val shown = if (m.text.isEmpty() && typing) "…" else clean
+            val shown = if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean
             SelectionContainer {
                 Text(
                     shown,
@@ -411,7 +412,8 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     }
                     Spacer(Modifier.weight(1f))
                     if (m.engine != null) Text(
-                        if (m.engine == Engine.NANO) "Gemini Nano · offline" else "Claude · online",
+                        (if (m.engine == Engine.NANO) (if (m.web) "Gemini Nano · Web" else "Gemini Nano · offline") else "Claude · online") +
+                            (if (m.web && m.engine == Engine.CLAUDE) " · Websuche" else ""),
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -524,9 +526,15 @@ private fun InputBar(ui: UiState, vm: ChatViewModel) {
                             )
                         }
                     }
+                    IconButton(onClick = vm::toggleWeb, modifier = Modifier.padding(bottom = 4.dp)) {
+                        Icon(
+                            Icons.Default.Language, if (ui.webSearch) "Websuche aus" else "Websuche an",
+                            tint = if (ui.webSearch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        )
+                    }
                     TextField(
                         value = text, onValueChange = { text = it },
-                        placeholder = { Text(if (ui.pending.isEmpty()) "Antworten…" else "Frage zum Anhang…") },
+                        placeholder = { Text(when { ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
                         maxLines = 6,
                         modifier = Modifier.weight(1f),
                         colors = TextFieldDefaults.colors(

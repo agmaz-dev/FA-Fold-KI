@@ -23,6 +23,10 @@ class Settings(context: Context) {
         get() = prefs.getString("system_prompt", DEFAULT_SYSTEM) ?: DEFAULT_SYSTEM
         set(v) = prefs.edit().putString("system_prompt", v).apply()
 
+    var webSearch: Boolean
+        get() = prefs.getBoolean("web_search", false)
+        set(v) = prefs.edit().putBoolean("web_search", v).apply()
+
     /** Own name and address, used as sender in letters. */
     var sender: String
         get() = prefs.getString("sender", "") ?: ""

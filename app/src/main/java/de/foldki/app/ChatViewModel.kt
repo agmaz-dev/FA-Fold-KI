@@ -33,6 +33,7 @@ data class UiState(
     val pending: List<Attachment> = emptyList(),
     val importing: Boolean = false,
     val notice: String? = null,
+    val webSearch: Boolean = false,
 ) {
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
@@ -51,6 +52,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             engine = settings.engine,
             model = settings.claudeModel,
             apiKeySet = settings.apiKey.isNotBlank(),
+            webSearch = settings.webSearch,
         )
     )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
@@ -79,6 +81,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(nanoStatus = e.message ?: "Download fehlgeschlagen") }
         }
         checkNano()
+    }
+
+    fun toggleWeb() {
+        val on = !_ui.value.webSearch
+        settings.webSearch = on
+        _ui.update { it.copy(webSearch = on, notice = if (on) "Websuche an" else "Websuche aus") }
     }
 
     fun setEngine(e: Engine) { settings.engine = e; _ui.update { it.copy(engine = e) } }
@@ -131,11 +139,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val prompt = text.trim().ifEmpty { if (pendingFiles.isNotEmpty()) "Was steht in diesem Dokument? Fasse es kurz zusammen." else "" }
         if (prompt.isEmpty() || _ui.value.generating || _ui.value.importing) return
         val engine = _ui.value.engine
+        val web = _ui.value.webSearch
 
         // Create conversation if needed and append user + empty assistant message.
         var conv = _ui.value.current ?: Conversation(title = prompt.take(40))
         val userMsg = ChatMessage(role = Role.USER, text = prompt, attachments = pendingFiles)
-        val botMsg = ChatMessage(role = Role.ASSISTANT, text = "", engine = engine)
+        val botMsg = ChatMessage(role = Role.ASSISTANT, text = "", engine = engine, web = web)
         conv = conv.copy(messages = conv.messages + userMsg + botMsg, updatedAt = System.currentTimeMillis())
         upsert(conv)
         _ui.update { it.copy(currentId = conv.id, generating = true, pending = emptyList()) }
@@ -145,8 +154,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         job = viewModelScope.launch {
             try {
                 val flow = when (engine) {
-                    Engine.NANO -> nano.reply(system, history)
-                    Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history)
+                    Engine.NANO -> nano.reply(system, history, web)
+                    Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history, web)
                 }
                 flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }
             } catch (e: kotlinx.coroutines.CancellationException) {
