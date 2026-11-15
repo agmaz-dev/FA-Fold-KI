@@ -39,6 +39,11 @@ import androidx.core.content.FileProvider
 import de.foldki.app.data.Attachment
 import de.foldki.app.export.PdfExporter
 import de.foldki.app.export.LetterParser
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -154,7 +159,14 @@ fun ChatApp(vm: ChatViewModel) {
         }
     }
 
-    if (showSettings) SettingsDialog(vm, ui, onDismiss = { showSettings = false })
+    // Settings slide in as a full-screen page; back arrow or back gesture returns to the chat.
+    AnimatedVisibility(
+        visible = showSettings,
+        enter = slideInHorizontally { it } + fadeIn(),
+        exit = slideOutHorizontally { it } + fadeOut(),
+    ) {
+        SettingsScreen(vm, ui, onBack = { showSettings = false })
+    }
 }
 
 @Composable
@@ -681,101 +693,4 @@ private fun InputBar(
             }
         }
     }
-}
-
-@Composable
-private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit) {
-    var key by remember { mutableStateOf(vm.settings.apiKey) }
-    var model by remember { mutableStateOf(vm.settings.claudeModel) }
-    var system by remember { mutableStateOf(vm.settings.systemPrompt) }
-    var sender by remember { mutableStateOf(vm.settings.sender) }
-    var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
-    var stVoice by remember { mutableStateOf(vm.settings.stVoice) }
-    val stStatus by vm.stStatus.collectAsStateWithLifecycle()
-    val stBusy by vm.stBusy.collectAsStateWithLifecycle()
-    val stReady = stStatus == READY || vm.voice.isReady
-    DisposableEffect(Unit) { onDispose { vm.voice.stopSpeaking() } }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Einstellungen") },
-        text = {
-            LazyColumn {
-                item {
-                    Text("Gemini Nano: ${ui.nanoStatus}", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = key, onValueChange = { key = it },
-                        label = { Text("Claude API-Schlüssel") },
-                        placeholder = { Text("sk-ant-…") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Text(
-                        "Erhältlich unter console.anthropic.com. Wird nur auf diesem Gerät gespeichert.",
-                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text("Claude-Modell", fontWeight = FontWeight.Medium)
-                }
-                items(Settings.MODELS) { (id, label) ->
-                    Row(Modifier.fillMaxWidth().clickable { model = id }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = model == id, onClick = { model = id })
-                        Text(label)
-                    }
-                }
-                item {
-                    Spacer(Modifier.height(16.dp))
-                    Text("Sprache: Tessa & Caleb", fontWeight = FontWeight.Medium)
-                    Text(
-                        "Sprechen und Zuhören laufen komplett auf dem Handy (Supertonic + Whisper), ohne Samsung- oder Google-Dienste.",
-                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(stStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (stBusy) {
-                            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                            TextButton(onClick = vm::cancelVoiceSetup) { Text("Abbrechen") }
-                        } else {
-                            TextButton(onClick = vm::setupVoice) {
-                                Text(if (stReady) "Neu laden / reparieren" else "Sprachfunktion einrichten (ca. 500 MB)")
-                            }
-                        }
-                    }
-                }
-                items(Supertonic.VOICES.keys.toList()) { key ->
-                    val label = Supertonic.VOICES.getValue(key).second
-                    Row(Modifier.fillMaxWidth().clickable { stVoice = key }, verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = stVoice == key, onClick = { stVoice = key })
-                        Text(label, modifier = Modifier.weight(1f))
-                        IconButton(
-                            enabled = vm.voice.supertonic.isReady && !stBusy,
-                            onClick = { vm.voice.rate = rate; vm.voice.previewSupertonic(key) { vm.notify("Stimme: $it") } },
-                        ) { Icon(Icons.Default.PlayArrow, "Probehören") }
-                    }
-                }
-                item {
-                    Text("Tempo: ${"%.1f".format(rate)}×", fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-                    Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.6f..1.6f)
-                }
-                item {
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = sender, onValueChange = { sender = it },
-                        label = { Text("Mein Absender für Briefe") },
-                        placeholder = { Text("Vorname Nachname\nStraße Nr.\nPLZ Ort") },
-                        minLines = 3, modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = system, onValueChange = { system = it },
-                        label = { Text("Anweisung an die KI (System-Prompt)") },
-                        minLines = 3, modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); vm.saveVoice(stVoice, rate); onDismiss() }) { Text("Speichern") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
-    )
 }
