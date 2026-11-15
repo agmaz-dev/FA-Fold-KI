@@ -136,7 +136,8 @@ class Attachments(private val context: Context) {
     private suspend fun ocr(bmp: Bitmap): String = suspendCancellableCoroutine { cont ->
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         recognizer.process(InputImage.fromBitmap(bmp, 0))
-            .addOnSuccessListener { cont.resume(it.text) }
-            .addOnFailureListener { cont.resume("") }
+            .addOnSuccessListener { if (cont.isActive) cont.resume(it.text) }
+            .addOnFailureListener { if (cont.isActive) cont.resume("") }
+            .addOnCompleteListener { recognizer.close() } // free the native OCR model after each page
     }
 }

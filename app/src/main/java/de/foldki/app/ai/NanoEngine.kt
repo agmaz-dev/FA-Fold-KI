@@ -77,7 +77,8 @@ class NanoEngine {
 
         // Text of attached documents/photos (latest ones first), limited to fit Nano.
         val docs = StringBuilder()
-        var budget = 4500
+        // With web results in the prompt, documents get less room so Nano's small input limit is not exceeded.
+        var budget = if (web.isNotBlank()) 2500 else 4500
         history.asReversed().flatMap { it.attachments }.forEach { a ->
             if (budget <= 0 || a.text.isBlank()) return@forEach
             val t = a.text.take(budget)
