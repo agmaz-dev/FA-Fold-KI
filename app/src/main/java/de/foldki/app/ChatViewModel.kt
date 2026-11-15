@@ -40,11 +40,16 @@ data class UiState(
 
 /** Words that mean "please write me a letter". */
 private val LETTER_WORDS = Regex(
-    "brief|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|ein schreiben|das schreiben|formelles schreiben",
+    "brief|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|" +
+        "ein schreiben|das schreiben|formelles schreiben|schreib (ihm|ihr|ihnen|denen|zurück)|antworte (ihm|ihr|ihnen|denen|darauf)|" +
+        "formulier",
     RegexOption.IGNORE_CASE,
 )
 
 const val READY = "Sprachfunktion ist eingerichtet."
+
+private const val VOICE_LETTER_RULES = """
+Das Gespräch läuft per Sprache. Nur der Teil nach ---ENDE--- wird vorgelesen: Halte ihn kurz und gesprochen."""
 
 private const val VOICE_RULES = """
 Das Gespräch läuft gerade per Sprache: Deine Antwort wird vorgelesen.
@@ -203,7 +208,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val history = conv.messages.dropLast(1)
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) }
-        val system = buildSystem(wantsLetter && !voice) + if (voice) VOICE_RULES else ""
+        val sentDoc = pendingFiles.isNotEmpty() && !wantsLetter
+        val system = buildSystem(wantsLetter) +
+            (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
+            (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
         job = viewModelScope.launch {
             try {
                 val flow = when (engine) {
@@ -222,10 +230,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             } finally {
+                if (wantsLetter) attachLetterPdf(conv.id, botMsg.id)
                 _ui.update { it.copy(generating = false) }
                 persist()
             }
         }
+    }
+
+    /** Puts the written letter into the chat as a PDF (open/share like any attachment). */
+    private fun attachLetterPdf(convId: String, msgId: String) {
+        val msg = _ui.value.conversations.firstOrNull { it.id == convId }?.messages?.firstOrNull { it.id == msgId } ?: return
+        if (msg.isError) return
+        val letter = de.foldki.app.export.LetterParser.parse(msg.text).letter ?: return
+        val pdf = runCatching { attachments.createPdf(de.foldki.app.export.PdfExporter.clean(letter)) }.getOrNull() ?: return
+        editMessage(convId, msgId) { it.copy(attachments = it.attachments + pdf) }
     }
 
     /** Letter rules only when the user actually asks for a letter – otherwise the AI talks normally. */

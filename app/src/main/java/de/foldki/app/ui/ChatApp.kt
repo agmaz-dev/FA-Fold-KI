@@ -38,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import de.foldki.app.data.Attachment
 import de.foldki.app.export.PdfExporter
+import de.foldki.app.export.LetterParser
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -328,6 +329,25 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
             else { speakingId = id; voice.speak(text) { if (speakingId == id) speakingId = null } }
         },
         speakingId = speakingId,
+        open = { a ->
+            runCatching {
+                val uri = FileProvider.getUriForFile(context, context.packageName + ".files", java.io.File(a.path))
+                context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, a.mime)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                })
+            }.onFailure { vm.notify("Keine App zum Öffnen gefunden.") }
+        },
+        shareFile = { a ->
+            runCatching {
+                val uri = FileProvider.getUriForFile(context, context.packageName + ".files", java.io.File(a.path))
+                context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = a.mime
+                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }, "Teilen"))
+            }.onFailure { vm.notify("Teilen fehlgeschlagen.") }
+        },
     )
 
     if (voiceMode) {
@@ -370,6 +390,8 @@ private class MessageActions(
     val sharePdf: (String) -> Unit,
     val speak: (id: String, text: String) -> Unit,
     val speakingId: String?,
+    val open: (Attachment) -> Unit,
+    val shareFile: (Attachment) -> Unit,
 )
 
 /** Ready-made requests, e.g. a reply letter to an uploaded letter. */
@@ -412,7 +434,7 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
             if (m.attachments.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 6.dp)) {
                     m.attachments.forEach { a ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(76.dp).clickable { actions.open(a) }) {
                             Thumbnail(a, 72)
                             Text(a.name, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -430,7 +452,7 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
-            val clean = PdfExporter.clean(m.text)
+            val clean = PdfExporter.clean(LetterParser.display(m.text))
             val shown = if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean
             SelectionContainer {
                 Text(
@@ -439,16 +461,39 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     color = if (m.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
                 )
             }
+            if (m.attachments.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    m.attachments.forEach { a ->
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.clickable { actions.open(a) },
+                        ) {
+                            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PictureAsPdf, null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(a.name, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
+                                    Text("Tippen zum Öffnen", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                IconButton(onClick = { actions.shareFile(a) }) {
+                                    Icon(Icons.Default.Share, "Teilen", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (!typing && !m.isError && m.text.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                     IconButton(onClick = { actions.copy(clean) }) {
                         Icon(Icons.Default.ContentCopy, "Kopieren", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    TextButton(onClick = { actions.savePdf(clean) }) {
+                    TextButton(onClick = { actions.savePdf(LetterParser.parse(m.text).letter?.let { PdfExporter.clean(it) } ?: clean) }) {
                         Icon(Icons.Default.PictureAsPdf, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp)); Text("Als PDF")
                     }
-                    IconButton(onClick = { actions.speak(m.id, clean) }) {
+                    IconButton(onClick = { actions.speak(m.id, PdfExporter.clean(LetterParser.spoken(m.text))) }) {
                         Icon(
                             if (actions.speakingId == m.id) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
                             if (actions.speakingId == m.id) "Vorlesen stoppen" else "Vorlesen",
