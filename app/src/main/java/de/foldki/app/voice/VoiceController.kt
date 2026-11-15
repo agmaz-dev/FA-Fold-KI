@@ -46,6 +46,7 @@ class VoiceController(context: Context) {
         cancelListening()
         if (!whisper.isReady) { onError("Bitte zuerst die Sprachfunktion einrichten (Einstellungen)."); return }
         stopRequested = false
+        scope.launch { whisper.warmUp() } // load Whisper in parallel to the recording (only the first time takes long)
         listenJob = scope.launch {
             requestFocus()
             try {
