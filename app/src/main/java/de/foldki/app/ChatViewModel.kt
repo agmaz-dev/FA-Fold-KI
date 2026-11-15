@@ -146,7 +146,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setEngine(e: Engine) { settings.engine = e; _ui.update { it.copy(engine = e) } }
 
-    fun addAttachment(uri: android.net.Uri) = viewModelScope.launch {
+    fun addAttachment(uri: android.net.Uri, deleteAfter: java.io.File? = null) = viewModelScope.launch {
         _ui.update { it.copy(importing = true) }
         try {
             val a = attachments.import(uri)
@@ -154,6 +154,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: Throwable) {
             _ui.update { it.copy(notice = "Datei konnte nicht geladen werden: ${e.message ?: e.javaClass.simpleName}") }
         } finally {
+            deleteAfter?.let { runCatching { it.delete() } } // camera original, the import made its own copy
             _ui.update { it.copy(importing = false) }
         }
     }
@@ -212,6 +213,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val system = buildSystem(wantsLetter) +
             (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
             (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
+        var finished = false
         job = viewModelScope.launch {
             try {
                 val flow = when (engine) {
@@ -219,6 +221,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history, web)
                 }
                 flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }
+                finished = true
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -230,8 +233,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             } finally {
-                if (wantsLetter) attachLetterPdf(conv.id, botMsg.id)
-                _ui.update { it.copy(generating = false) }
+                // No PDF from a half-written letter (stopped or failed).
+                if (wantsLetter && finished) attachLetterPdf(conv.id, botMsg.id)
+                // Only the still-current job may end "generating" (a stopped job must not end the next one).
+                if (job == null || job === coroutineContext[Job]) _ui.update { it.copy(generating = false) }
                 persist()
             }
         }
@@ -269,8 +274,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
+    /** One writer at a time, in order, so an older snapshot can never overwrite a newer one. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val saveDispatcher = kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1)
+
     private fun persist() {
         val snapshot = _ui.value.conversations
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { store.save(snapshot) } }
+        viewModelScope.launch(saveDispatcher) { runCatching { store.save(snapshot) } }
     }
 }

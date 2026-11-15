@@ -547,7 +547,8 @@ private fun InputBar(
         }
     }
     var plusOpen by remember { mutableStateOf(false) }
-    var cameraFile by remember { mutableStateOf<java.io.File?>(null) }
+    // Path survives if Android recreates the activity while the camera app is open.
+    var cameraPath by rememberSaveable { mutableStateOf<String?>(null) }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
         uris.forEach { vm.addAttachment(it) }
@@ -556,10 +557,10 @@ private fun InputBar(
         uris.forEach { vm.addAttachment(it) }
     }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = cameraFile
-        if (ok && f != null) {
-            vm.addAttachment(android.net.Uri.fromFile(f))
-        }
+        val f = cameraPath?.let { java.io.File(it) }
+        cameraPath = null
+        if (ok && f != null && f.length() > 0) vm.addAttachment(android.net.Uri.fromFile(f), deleteAfter = f)
+        else f?.delete()
     }
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -634,7 +635,7 @@ private fun InputBar(
                                 onClick = {
                                     plusOpen = false
                                     val f = vm.attachments.newCameraFile()
-                                    cameraFile = f
+                                    cameraPath = f.absolutePath
                                     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", f)
                                     runCatching { takePhoto.launch(uri) }.onFailure { vm.notify("Keine Kamera-App gefunden") }
                                 },
