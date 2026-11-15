@@ -7,6 +7,7 @@ Chat-App für Android (optimiert für das Galaxy Z Fold7):
 - **+ Anhänge:** Fotos (Galerie/Kamera) und PDFs. Text wird offline gelesen (PDF-Text + Texterkennung), damit auch Gemini Nano sie versteht; Claude bekommt die Originaldateien.
 - **Briefe & PDF:** Schnellaktionen „Antwortschreiben“, „Widerspruch“, „Zusammenfassen“, „Brief schreiben“; jede Antwort als PDF speichern oder teilen.
 - **🌐 Websuche (Globus-Knopf):** Claude sucht selbst im Internet; Gemini Nano bekommt Wikipedia-Artikel und aktuelle Schlagzeilen (Google News) dazu.
+- **🎙️ Sprache:** Sprachmodus (Knopf rechts bei leerem Feld) wie in der Claude-App, Mikrofon zum Diktieren, Vorlesen jeder Antwort.
 - Chat-Verlauf, Seitenleiste (aufgeklappt dauerhaft sichtbar), hell/dunkel.
 
 ## APK bekommen

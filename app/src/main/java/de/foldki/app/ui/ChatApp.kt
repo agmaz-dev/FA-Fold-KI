@@ -8,6 +8,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.runtime.DisposableEffect
+import androidx.core.content.ContextCompat
+import de.foldki.app.voice.VoiceController
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Close
@@ -273,6 +282,21 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
         ui.notice?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); vm.notify(null) }
     }
 
+    val voice = remember { VoiceController(context) }
+    DisposableEffect(Unit) { onDispose { voice.release() } }
+    var voiceMode by rememberSaveable { mutableStateOf(false) }
+    var afterMicGranted by remember { mutableStateOf<(() -> Unit)?>(null) }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) afterMicGranted?.invoke() else vm.notify("Ohne Mikrofon-Berechtigung geht die Spracheingabe nicht.")
+        afterMicGranted = null
+    }
+    val withMic: (() -> Unit) -> Unit = { action ->
+        if (!voice.recognitionAvailable) vm.notify("Auf diesem Gerät ist keine Spracherkennung verfügbar.")
+        else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) action()
+        else { afterMicGranted = action; micPermission.launch(Manifest.permission.RECORD_AUDIO) }
+    }
+    var speakingId by remember { mutableStateOf<String?>(null) }
+
     // "Save as PDF": remember the text, then let the user choose where to store the file.
     var pdfText by remember { mutableStateOf("") }
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -294,7 +318,17 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
             runCatching { PdfExporter.share(context, text, pdfName(text)) }
                 .onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") }
         },
+        speak = { id, text ->
+            if (speakingId == id) { voice.stopSpeaking(); speakingId = null }
+            else { speakingId = id; voice.speak(text) { if (speakingId == id) speakingId = null } }
+        },
+        speakingId = speakingId,
     )
+
+    if (voiceMode) {
+        VoiceOverlay(ui, vm, voice, onClose = { voiceMode = false })
+        return
+    }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
         TopBar(ui, vm, showMenu, onMenu)
@@ -314,7 +348,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
                 }
             }
         }
-        InputBar(ui, vm)
+        InputBar(ui, vm, voice, withMic, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
     }
 }
 
@@ -329,6 +363,8 @@ private class MessageActions(
     val copy: (String) -> Unit,
     val savePdf: (String) -> Unit,
     val sharePdf: (String) -> Unit,
+    val speak: (id: String, text: String) -> Unit,
+    val speakingId: String?,
 )
 
 /** Ready-made requests, e.g. a reply letter to an uploaded letter. */
@@ -407,6 +443,13 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                         Icon(Icons.Default.PictureAsPdf, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(4.dp)); Text("Als PDF")
                     }
+                    IconButton(onClick = { actions.speak(m.id, clean) }) {
+                        Icon(
+                            if (actions.speakingId == m.id) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+                            if (actions.speakingId == m.id) "Vorlesen stoppen" else "Vorlesen",
+                            modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     IconButton(onClick = { actions.sharePdf(clean) }) {
                         Icon(Icons.Default.Share, "PDF teilen", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -423,9 +466,24 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
 }
 
 @Composable
-private fun InputBar(ui: UiState, vm: ChatViewModel) {
+private fun InputBar(
+    ui: UiState, vm: ChatViewModel, voice: VoiceController,
+    withMic: (() -> Unit) -> Unit, onVoiceMode: () -> Unit,
+) {
     val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
+    var dictating by remember { mutableStateOf(false) }
+    val dictate = {
+        if (dictating) { voice.stopListening() } else withMic {
+            val before = text
+            dictating = true
+            voice.listen(
+                onPartial = { text = (before + " " + it).trim() },
+                onFinal = { t -> text = (before + " " + t).trim(); dictating = false },
+                onError = { msg -> dictating = false; vm.notify(msg) },
+            )
+        }
+    }
     var plusOpen by remember { mutableStateOf(false) }
     var cameraFile by remember { mutableStateOf<java.io.File?>(null) }
 
@@ -534,7 +592,7 @@ private fun InputBar(ui: UiState, vm: ChatViewModel) {
                     }
                     TextField(
                         value = text, onValueChange = { text = it },
-                        placeholder = { Text(when { ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
+                        placeholder = { Text(when { dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
                         maxLines = 6,
                         modifier = Modifier.weight(1f),
                         colors = TextFieldDefaults.colors(
@@ -544,8 +602,23 @@ private fun InputBar(ui: UiState, vm: ChatViewModel) {
                             unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
                         ),
                     )
+                    if (!ui.generating) {
+                        IconButton(onClick = dictate, modifier = Modifier.padding(bottom = 4.dp)) {
+                            Icon(
+                                if (dictating) Icons.Default.MicOff else Icons.Default.Mic, "Diktieren",
+                                tint = if (dictating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     if (ui.generating) {
                         FilledIconButton(onClick = vm::stop, modifier = Modifier.padding(4.dp)) { Icon(Icons.Default.Stop, "Stopp") }
+                    } else if (text.isBlank() && ui.pending.isEmpty() && !dictating) {
+                        // Like the Claude app: with an empty field the button starts the voice conversation.
+                        FilledIconButton(
+                            onClick = onVoiceMode,
+                            modifier = Modifier.padding(4.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        ) { Icon(Icons.Default.GraphicEq, "Sprachmodus") }
                     } else {
                         FilledIconButton(
                             onClick = { vm.send(text); text = "" },

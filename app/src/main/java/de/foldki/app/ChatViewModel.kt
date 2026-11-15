@@ -38,6 +38,10 @@ data class UiState(
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
 
+private const val VOICE_RULES = """
+Das Gespräch läuft gerade per Sprache: Deine Antwort wird vorgelesen.
+Antworte kurz und natürlich gesprochen (meist 1 bis 4 Sätze), ohne Listen, Tabellen, Emojis oder Sonderzeichen."""
+
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ChatStore(app)
     val settings = Settings(app)
@@ -134,7 +138,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stop() { job?.cancel(); job = null; _ui.update { it.copy(generating = false) } }
 
-    fun send(text: String) {
+    /** [voice] = asked in voice mode: answer short and speakable. */
+    fun send(text: String, voice: Boolean = false) {
         val pendingFiles = _ui.value.pending
         val prompt = text.trim().ifEmpty { if (pendingFiles.isNotEmpty()) "Was steht in diesem Dokument? Fasse es kurz zusammen." else "" }
         if (prompt.isEmpty() || _ui.value.generating || _ui.value.importing) return
@@ -150,7 +155,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(currentId = conv.id, generating = true, pending = emptyList()) }
 
         val history = conv.messages.dropLast(1)
-        val system = buildSystem()
+        val system = buildSystem() + if (voice) VOICE_RULES else ""
         job = viewModelScope.launch {
             try {
                 val flow = when (engine) {
