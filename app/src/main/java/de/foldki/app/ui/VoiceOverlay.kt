@@ -53,7 +53,7 @@ import de.foldki.app.UiState
 import de.foldki.app.data.Engine
 import de.foldki.app.data.Role
 import de.foldki.app.export.PdfExporter
-import de.foldki.app.export.LetterParser
+import de.foldki.app.export.DocumentParser
 import de.foldki.app.voice.VoiceController
 
 private enum class Phase { LISTENING, THINKING, SPEAKING, PAUSED }
@@ -90,7 +90,7 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
             val last = ui.current?.messages?.lastOrNull()
             if (last != null && last.role == Role.ASSISTANT && !last.isError) {
                 phase = Phase.SPEAKING
-                voice.speak(PdfExporter.clean(LetterParser.spoken(last.text))) { startListening() }
+                voice.speak(DocumentParser.spoken(last.text)) { startListening() }
             } else {
                 phase = Phase.PAUSED; info = last?.text ?: "Keine Antwort."
             }
@@ -146,7 +146,7 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
             val shown = when {
                 info.isNotBlank() -> info
                 phase == Phase.LISTENING -> heard
-                answer.isNotBlank() -> PdfExporter.clean(LetterParser.spoken(answer))
+                answer.isNotBlank() -> DocumentParser.spoken(answer)
                 else -> heard
             }
             Text(

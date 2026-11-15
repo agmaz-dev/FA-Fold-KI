@@ -12,8 +12,8 @@ android {
         applicationId = "de.foldki.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.7"
+        versionCode = 14
+        versionName = "1.8"
         // Galaxy Z Fold7 and all current phones are 64-bit ARM; keeps the APK small.
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -88,4 +88,9 @@ dependencies {
 
     // Claude API (official Anthropic Java SDK)
     implementation("com.anthropic:anthropic-java:3.8.0")
+
+    testImplementation("junit:junit:4.13.2")
 }
+
+// Run the JVM unit tests (e.g. DocumentParser) in every CI build without touching the workflow.
+tasks.matching { it.name == "assembleRelease" }.configureEach { dependsOn("testReleaseUnitTest") }

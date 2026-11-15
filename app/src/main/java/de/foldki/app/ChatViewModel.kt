@@ -13,6 +13,7 @@ import de.foldki.app.data.Conversation
 import de.foldki.app.data.Engine
 import de.foldki.app.data.Role
 import de.foldki.app.data.Settings
+import de.foldki.app.export.DocumentParser
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,7 +50,7 @@ private val LETTER_WORDS = Regex(
 const val READY = "Sprachfunktion ist eingerichtet."
 
 private const val VOICE_LETTER_RULES = """
-Das Gespräch läuft per Sprache. Nur der Teil nach ---ENDE--- wird vorgelesen: Halte ihn kurz und gesprochen."""
+Das Gespräch läuft per Sprache. Nur der Text außerhalb von ---DOKUMENT--- … ---ENDE--- wird vorgelesen: Halte ihn kurz und gesprochen."""
 
 private const val VOICE_RULES = """
 Das Gespräch läuft gerade per Sprache: Deine Antwort wird vorgelesen.
@@ -207,10 +208,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(currentId = conv.id, generating = true, pending = emptyList()) }
 
         val history = conv.messages.dropLast(1)
+        // Document in the previous answer -> keep the rules for follow-ups like "mach es kürzer".
+        val lastDoc = history.lastOrNull { it.role == Role.ASSISTANT && !it.isError }
+            ?.let { DocumentParser.parse(it.text) }?.takeIf { it.document != null }
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
-            .any { LETTER_WORDS.containsMatchIn(it) }
+            .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true
         val sentDoc = pendingFiles.isNotEmpty() && !wantsLetter
-        val system = buildSystem(wantsLetter) +
+        val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null) +
             (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
             (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
         var finished = false
@@ -234,7 +238,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } finally {
                 // No PDF from a half-written letter (stopped or failed).
-                if (wantsLetter && finished) attachLetterPdf(conv.id, botMsg.id)
+                if (finished) attachDocumentPdf(conv.id, botMsg.id, wantsLetter)
                 // Only the still-current job may end "generating" (a stopped job must not end the next one).
                 if (job == null || job === coroutineContext[Job]) _ui.update { it.copy(generating = false) }
                 persist()
@@ -242,18 +246,22 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Puts the written letter into the chat as a PDF (open/share like any attachment). */
-    private fun attachLetterPdf(convId: String, msgId: String) {
+    /** Puts a finished letter (or a document the user asked for as letter) into the chat as a PDF. */
+    private fun attachDocumentPdf(convId: String, msgId: String, wantsLetter: Boolean) {
         val msg = _ui.value.conversations.firstOrNull { it.id == convId }?.messages?.firstOrNull { it.id == msgId } ?: return
         if (msg.isError) return
-        val letter = de.foldki.app.export.LetterParser.parse(msg.text).letter ?: return
-        val pdf = runCatching { attachments.createPdf(de.foldki.app.export.PdfExporter.clean(letter)) }.getOrNull() ?: return
+        val parts = DocumentParser.parse(msg.text)
+        val doc = parts.document ?: return
+        if (!parts.complete || !(wantsLetter || parts.isLetter)) return
+        val pdf = runCatching { attachments.createPdf(doc) }.getOrNull() ?: return
         editMessage(convId, msgId) { it.copy(attachments = it.attachments + pdf) }
     }
 
     /** Letter rules only when the user actually asks for a letter – otherwise the AI talks normally. */
-    private fun buildSystem(letter: Boolean): String = buildString {
+    private fun buildSystem(letter: Boolean, followUpDoc: Boolean): String = buildString {
         append(settings.systemPrompt).append("\n")
+        append(Settings.DOCUMENT_MARKER_RULE).append("\n")
+        if (followUpDoc) append(Settings.DOCUMENT_FOLLOWUP_RULE).append("\n")
         append("Heutiges Datum: ").append(java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())).append("\n")
         if (letter) {
             append(Settings.LETTER_RULES).append("\n")

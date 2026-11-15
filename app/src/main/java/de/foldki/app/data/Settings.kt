@@ -94,11 +94,19 @@ So antwortest du:
         /** Only added when the user asks for a letter. */
         const val LETTER_RULES = """
 Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.).
-1. Schreibe zuerst den vollständigen Brief nach DIN 5008 als reinen Text ohne Markdown, genau zwischen einer Zeile ---BRIEF--- und einer Zeile ---ENDE---.
+1. Schreibe den vollständigen Brief nach DIN 5008 als reinen Text ohne Markdown, genau zwischen einer Zeile ---DOKUMENT--- und einer Zeile ---ENDE---.
    Aufbau: Absender, Empfänger, Ort und Datum, Betreff, Anrede, Brieftext, Grußformel, Name.
    Beziehe dich konkret auf das angehängte Schreiben (Aktenzeichen, Datum, Inhalt), wenn eines vorhanden ist.
    Fehlende Angaben markierst du mit [eckigen Klammern], z. B. [Aktenzeichen].
 2. Nach ---ENDE--- schreibst du einen sachlichen Satz, worauf du dich stützt. Keine Rückfrage."""
+
+        /** Always added (also with a custom prompt): documents go between fixed markers, so PDF export gets only the document. */
+        const val DOCUMENT_MARKER_RULE = """
+Wenn du ein Dokument erstellst (Brief, Schreiben, Widerspruch, Zusammenfassung, Liste o. Ä.), steht NUR das Dokument zwischen einer Zeile ---DOKUMENT--- und einer Zeile ---ENDE---. Kommentare, Erklärungen und Rückfragen nur außerhalb."""
+
+        /** Follow-up to an answer that contained a document ("mach es kürzer"). */
+        const val DOCUMENT_FOLLOWUP_RULE = """
+Deine letzte Antwort enthielt ein Dokument. Wenn der Nutzer es ändern möchte, gib das vollständige geänderte Dokument wieder zwischen ---DOKUMENT--- und ---ENDE--- aus."""
 
         /** When the user just sent a document/photo and did not ask for a letter. */
         const val DOC_RULES = """

@@ -38,7 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import de.foldki.app.data.Attachment
 import de.foldki.app.export.PdfExporter
-import de.foldki.app.export.LetterParser
+import de.foldki.app.export.DocumentParser
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -390,7 +390,9 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
 }
 
 private fun pdfName(text: String): String {
-    val first = PdfExporter.clean(text).lines().firstOrNull { it.startsWith("Betreff") }
+    val lines = PdfExporter.clean(text).lines().map { it.trim() }
+    val first = lines.firstOrNull { it.startsWith("Betreff") }
+        ?: lines.firstOrNull { it.isNotBlank() }?.takeIf { it.length <= 50 && !it.endsWith(",") }
         ?: "Fold-KI-Dokument"
     val base = first.removePrefix("Betreff:").trim().take(40).replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "").trim()
     return (base.ifBlank { "Fold-KI-Dokument" }) + ".pdf"
@@ -440,6 +442,11 @@ private fun Thumbnail(a: Attachment, size: Int) {
 }
 
 @Composable
+private fun AnswerText(color: androidx.compose.ui.graphics.Color, text: String) {
+    SelectionContainer { Text(text, fontFamily = FontFamily.Serif, fontSize = 16.sp, lineHeight = 25.sp, color = color) }
+}
+
+@Composable
 private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions) {
     if (m.role == Role.USER) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
@@ -464,14 +471,42 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
-            val clean = PdfExporter.clean(LetterParser.display(m.text))
-            val shown = if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean
-            SelectionContainer {
-                Text(
-                    shown,
-                    fontFamily = FontFamily.Serif, fontSize = 16.sp, lineHeight = 25.sp,
-                    color = if (m.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
-                )
+            val parts = remember(m.text) { DocumentParser.parse(m.text) }
+            val clean = remember(m.text) { DocumentParser.display(m.text) }
+            val doc = parts.document
+            // What the PDF/share buttons export: only the document, or the cleaned answer if there is none.
+            val exportText = doc ?: clean
+            val textColor = if (m.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground
+            if (doc == null) {
+                AnswerText(textColor, if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean)
+            } else {
+                if (parts.before.isNotBlank()) AnswerText(textColor, DocumentParser.clean(parts.before))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(vertical = 8.dp).widthIn(max = 720.dp).fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        SelectionContainer {
+                            Text(doc, fontFamily = FontFamily.Serif, fontSize = 15.sp, lineHeight = 23.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (!typing) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                                if (!parts.complete) Text("Unvollständig", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                Spacer(Modifier.weight(1f))
+                                TextButton(onClick = { actions.savePdf(doc) }) {
+                                    Icon(Icons.Default.PictureAsPdf, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp)); Text("PDF")
+                                }
+                                IconButton(onClick = { actions.sharePdf(doc) }) {
+                                    Icon(Icons.Default.Share, "Dokument als PDF teilen", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+                if (parts.after.isNotBlank()) AnswerText(textColor, DocumentParser.clean(parts.after))
             }
             if (m.attachments.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
@@ -501,18 +536,18 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     IconButton(onClick = { actions.copy(clean) }) {
                         Icon(Icons.Default.ContentCopy, "Kopieren", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    TextButton(onClick = { actions.savePdf(LetterParser.parse(m.text).letter?.let { PdfExporter.clean(it) } ?: clean) }) {
+                    TextButton(onClick = { actions.savePdf(exportText) }) {
                         Icon(Icons.Default.PictureAsPdf, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp)); Text("Als PDF")
+                        Spacer(Modifier.width(4.dp)); Text(if (doc != null) "Als PDF" else "Antwort als PDF")
                     }
-                    IconButton(onClick = { actions.speak(m.id, PdfExporter.clean(LetterParser.spoken(m.text))) }) {
+                    IconButton(onClick = { actions.speak(m.id, DocumentParser.spoken(m.text)) }) {
                         Icon(
                             if (actions.speakingId == m.id) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
                             if (actions.speakingId == m.id) "Vorlesen stoppen" else "Vorlesen",
                             modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { actions.sharePdf(clean) }) {
+                    IconButton(onClick = { actions.sharePdf(exportText) }) {
                         Icon(Icons.Default.Share, "PDF teilen", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.weight(1f))
