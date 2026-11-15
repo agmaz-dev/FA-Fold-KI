@@ -12,15 +12,26 @@ android {
         applicationId = "de.foldki.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.2.1"
+    }
+
+    // Fixed key, committed on purpose: every build must carry the same signature,
+    // otherwise Android refuses to install an update over the existing app.
+    // This key is only for privately sideloaded APKs, not for a Play Store release.
+    signingConfigs {
+        create("sideload") {
+            storeFile = file("foldki-release.jks")
+            storePassword = "foldki-sideload"
+            keyAlias = "foldki"
+            keyPassword = "foldki-sideload"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the APK installs directly (sideload).
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("sideload")
         }
     }
 
