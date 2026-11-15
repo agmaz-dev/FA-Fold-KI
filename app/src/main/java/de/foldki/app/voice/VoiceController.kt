@@ -3,7 +3,10 @@ package de.foldki.app.voice
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.content.ComponentName
+import android.os.Build
 import android.speech.RecognitionListener
+import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
@@ -86,20 +89,75 @@ class VoiceController(context: Context) {
 
     val useSupertonic: Boolean get() = engine == "supertonic" && supertonic.isReady
 
-    val recognitionAvailable: Boolean get() = SpeechRecognizer.isRecognitionAvailable(app)
+    /** True if any recognizer exists – or Google's voice dialog can be used as a fallback. */
+    val recognitionAvailable: Boolean get() = true
+
+    /** One way of getting a SpeechRecognizer; tried in order until one works. */
+    private sealed class Rec(val label: String) {
+        object OnDevice : Rec("offline")
+        object Default : Rec("standard")
+        class Service(val cn: ComponentName) : Rec(cn.packageName)
+    }
+
+    private var workingRec: Int = 0
+
+    private fun recognizers(): List<Rec> {
+        val list = mutableListOf<Rec>()
+        if (Build.VERSION.SDK_INT >= 33 && runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(app) }.getOrDefault(false)) {
+            list += Rec.OnDevice
+        }
+        list += Rec.Default
+        // Every installed recognition service (Google first), in case the default one is broken.
+        val services = runCatching {
+            app.packageManager.queryIntentServices(Intent(RecognitionService.SERVICE_INTERFACE), 0)
+                .map { ComponentName(it.serviceInfo.packageName, it.serviceInfo.name) }
+        }.getOrDefault(emptyList())
+        services.sortedBy { if (it.packageName.contains("google")) 0 else 1 }.forEach { list += Rec.Service(it) }
+        return list
+    }
+
+    private fun create(rec: Rec): SpeechRecognizer = when (rec) {
+        Rec.OnDevice -> if (Build.VERSION.SDK_INT >= 31) SpeechRecognizer.createOnDeviceSpeechRecognizer(app)
+                        else SpeechRecognizer.createSpeechRecognizer(app)
+        Rec.Default -> SpeechRecognizer.createSpeechRecognizer(app)
+        is Rec.Service -> SpeechRecognizer.createSpeechRecognizer(app, rec.cn)
+    }
 
     /**
      * Listens once. [onPartial] gets the text while speaking, [onFinal] the final text
      * (empty if nothing was understood), [onError] a German message.
+     * If a recognizer fails with a service error, the next one is tried automatically.
+     * [onNeedsDialog] is called when no recognizer works, so the UI can open Google's voice dialog.
      */
-    fun listen(onPartial: (String) -> Unit, onFinal: (String) -> Unit, onError: (String) -> Unit, onLevel: (Float) -> Unit = {}) {
+    fun listen(
+        onPartial: (String) -> Unit, onFinal: (String) -> Unit, onError: (String) -> Unit,
+        onLevel: (Float) -> Unit = {}, onNeedsDialog: (() -> Unit)? = null,
+    ) {
         stopSpeaking()
         cancelListening()
-        val r = SpeechRecognizer.createSpeechRecognizer(app)
+        val recs = recognizers()
+        val order = (recs.indices.drop(workingRec.coerceIn(0, recs.lastIndex)) + recs.indices.take(workingRec.coerceIn(0, recs.lastIndex)))
+        attempt(recs, order, 0, onPartial, onFinal, onError, onLevel, onNeedsDialog)
+    }
+
+    private fun attempt(
+        recs: List<Rec>, order: List<Int>, pos: Int,
+        onPartial: (String) -> Unit, onFinal: (String) -> Unit, onError: (String) -> Unit,
+        onLevel: (Float) -> Unit, onNeedsDialog: (() -> Unit)?,
+    ) {
+        if (pos >= order.size) {
+            if (onNeedsDialog != null) onNeedsDialog()
+            else onError("Spracherkennung auf diesem Gerät nicht erreichbar.")
+            return
+        }
+        val idx = order[pos]
+        val r = runCatching { create(recs[idx]) }.getOrNull()
+        if (r == null) { attempt(recs, order, pos + 1, onPartial, onFinal, onError, onLevel, onNeedsDialog); return }
         recognizer = r
+        var heardSomething = false
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
+            override fun onReadyForSpeech(params: Bundle?) { workingRec = idx }
+            override fun onBeginningOfSpeech() { heardSomething = true }
             override fun onRmsChanged(rmsdB: Float) = onLevel(((rmsdB + 2f) / 12f).coerceIn(0f, 1f))
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
@@ -108,25 +166,40 @@ class VoiceController(context: Context) {
                 partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let(onPartial)
             }
             override fun onResults(results: Bundle?) {
+                workingRec = idx
                 onFinal(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty())
             }
             override fun onError(error: Int) {
                 when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> onFinal("")
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> onError("Mikrofon-Berechtigung fehlt.")
-                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-                        onError("Spracherkennung braucht Internet oder das Offline-Sprachpaket Deutsch.")
-                    else -> onError("Spracherkennung fehlgeschlagen (Code $error).")
+                    else -> {
+                        // Service problem (e.g. code 11 "server disconnected", 12/13 language missing):
+                        // try the next recognizer, unless the user had already started talking.
+                        android.util.Log.w("FoldKI", "Recognizer ${recs[idx].label} error $error")
+                        runCatching { r.destroy() }
+                        if (recognizer === r) recognizer = null
+                        if (!heardSomething) {
+                            main.post { attempt(recs, order, pos + 1, onPartial, onFinal, onError, onLevel, onNeedsDialog) }
+                        } else if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT) {
+                            onError("Spracherkennung braucht Internet oder das Offline-Sprachpaket Deutsch.")
+                        } else {
+                            onError("Spracherkennung fehlgeschlagen (Code $error). Bitte nochmal versuchen.")
+                        }
+                    }
                 }
             }
         })
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE")
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-        }
-        r.startListening(intent)
+        r.startListening(recognizeIntent())
+    }
+
+    /** Intent for both the in-app recognizer and Google's voice dialog. */
+    fun recognizeIntent() = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE")
+        putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+        putExtra(RecognizerIntent.EXTRA_PROMPT, "Sprich jetzt")
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
     }
 
     fun stopListening() { recognizer?.stopListening() }

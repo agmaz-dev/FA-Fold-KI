@@ -300,6 +300,22 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
     }
     var speakingId by remember { mutableStateOf<String?>(null) }
 
+    // Last resort for speech input: Google's own voice dialog (works even if the in-app recognizer fails).
+    var dialogCallback by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    val systemRecognizer = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+        val text = res.data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
+        dialogCallback?.invoke(text)
+        dialogCallback = null
+    }
+    val openDialog: ((String) -> Unit) -> Unit = { cb ->
+        dialogCallback = cb
+        runCatching { systemRecognizer.launch(voice.recognizeIntent()) }.onFailure {
+            dialogCallback = null
+            vm.notify("Keine Spracherkennung gefunden. Bitte die Google-App installieren oder aktualisieren.")
+            cb("")
+        }
+    }
+
     // "Save as PDF": remember the text, then let the user choose where to store the file.
     var pdfText by remember { mutableStateOf("") }
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -329,7 +345,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
     )
 
     if (voiceMode) {
-        VoiceOverlay(ui, vm, voice, onClose = { voiceMode = false })
+        VoiceOverlay(ui, vm, voice, openDialog, onClose = { voiceMode = false })
         return
     }
 
@@ -351,7 +367,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
                 }
             }
         }
-        InputBar(ui, vm, voice, withMic, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
+        InputBar(ui, vm, voice, withMic, openDialog, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
     }
 }
 
@@ -481,7 +497,7 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
 @Composable
 private fun InputBar(
     ui: UiState, vm: ChatViewModel, voice: VoiceController,
-    withMic: (() -> Unit) -> Unit, onVoiceMode: () -> Unit,
+    withMic: (() -> Unit) -> Unit, openDialog: ((String) -> Unit) -> Unit, onVoiceMode: () -> Unit,
 ) {
     val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
@@ -494,6 +510,7 @@ private fun InputBar(
                 onPartial = { text = (before + " " + it).trim() },
                 onFinal = { t -> text = (before + " " + t).trim(); dictating = false },
                 onError = { msg -> dictating = false; vm.notify(msg) },
+                onNeedsDialog = { openDialog { t -> text = (before + " " + t).trim(); dictating = false } },
             )
         }
     }
