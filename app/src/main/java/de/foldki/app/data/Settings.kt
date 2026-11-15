@@ -20,7 +20,8 @@ class Settings(context: Context) {
         set(v) = prefs.edit().putString("engine", v.name).apply()
 
     var systemPrompt: String
-        get() = prefs.getString("system_prompt", DEFAULT_SYSTEM) ?: DEFAULT_SYSTEM
+        get() = (prefs.getString("system_prompt", DEFAULT_SYSTEM) ?: DEFAULT_SYSTEM)
+            .let { if (it == OLD_DEFAULT_SYSTEM) DEFAULT_SYSTEM else it } // migrate the old, too formal default
         set(v) = prefs.edit().putString("system_prompt", v).apply()
 
     var ttsVoice: String
@@ -60,12 +61,16 @@ class Settings(context: Context) {
             "claude-sonnet-5-5" to "Claude Sonnet 5.5 (schnell)",
             "claude-haiku-5-5" to "Claude Haiku 5.5 (günstig)",
         )
-        const val DEFAULT_SYSTEM =
+        private const val OLD_DEFAULT_SYSTEM =
             "Du bist ein hilfreicher Assistent. Antworte in der Sprache des Nutzers, klar und freundlich."
+        const val DEFAULT_SYSTEM =
+            "Du bist ein freundlicher, hilfsbereiter Assistent. Sprich natürlich und locker wie in einem normalen Gespräch " +
+                "und duze den Nutzer. Antworte in der Sprache des Nutzers. Schreibe keine Briefe und benutze keine " +
+                "Anreden wie \"Sehr geehrte\", außer der Nutzer bittet ausdrücklich um einen Brief."
 
         /** Added to every system prompt so both engines write proper letters. */
         const val LETTER_RULES = """
-Wenn der Nutzer ein Schreiben, einen Brief, ein Antwortschreiben, Gegenschreiben oder einen Widerspruch möchte:
+Der Nutzer möchte jetzt einen Brief bzw. ein Schreiben.
 Schreibe einen vollständigen, formellen Brief nach DIN 5008 als reinen Text ohne Markdown (keine Sternchen, keine Rauten).
 Aufbau: Absender, Empfänger, Ort und Datum, Betreff, Anrede, Brieftext, Grußformel, Name.
 Beziehe dich konkret auf das angehängte Schreiben (Aktenzeichen, Datum, Inhalt), wenn eines vorhanden ist.

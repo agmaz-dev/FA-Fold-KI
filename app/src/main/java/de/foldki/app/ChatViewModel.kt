@@ -38,6 +38,12 @@ data class UiState(
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
 
+/** Words that mean "please write me a letter". */
+private val LETTER_WORDS = Regex(
+    "brief|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|ein schreiben|das schreiben|formelles schreiben",
+    RegexOption.IGNORE_CASE,
+)
+
 const val READY = "Sprachfunktion ist eingerichtet."
 
 private const val VOICE_RULES = """
@@ -195,7 +201,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(currentId = conv.id, generating = true, pending = emptyList()) }
 
         val history = conv.messages.dropLast(1)
-        val system = buildSystem() + if (voice) VOICE_RULES else ""
+        val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
+            .any { LETTER_WORDS.containsMatchIn(it) }
+        val system = buildSystem(wantsLetter && !voice) + if (voice) VOICE_RULES else ""
         job = viewModelScope.launch {
             try {
                 val flow = when (engine) {
@@ -220,11 +228,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun buildSystem(): String = buildString {
+    /** Letter rules only when the user actually asks for a letter – otherwise the AI talks normally. */
+    private fun buildSystem(letter: Boolean): String = buildString {
         append(settings.systemPrompt).append("\n")
-        append(Settings.LETTER_RULES).append("\n")
         append("Heutiges Datum: ").append(java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())).append("\n")
-        if (settings.sender.isNotBlank()) append("Absender des Nutzers (für Briefe):\n").append(settings.sender).append("\n")
+        if (letter) {
+            append(Settings.LETTER_RULES).append("\n")
+            if (settings.sender.isNotBlank()) append("Absender des Nutzers:\n").append(settings.sender).append("\n")
+        }
     }
 
     private fun editMessage(convId: String, msgId: String, f: (ChatMessage) -> ChatMessage) {
