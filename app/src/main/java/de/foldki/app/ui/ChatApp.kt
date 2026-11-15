@@ -52,6 +52,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -650,9 +651,23 @@ private fun InputBar(
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(6.dp)) {
+                // Text field over the full width (also on the narrow cover screen), buttons below it.
+                TextField(
+                    value = text, onValueChange = { text = it },
+                    placeholder = { Text(when { dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
+                    minLines = 1, maxLines = 5,
+                    // Full width on top; at most ~5 lines, then it scrolls inside instead of pushing the chat up.
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    ),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, bottom = 4.dp)) {
                     Box {
-                        IconButton(onClick = { plusOpen = true }, modifier = Modifier.padding(bottom = 4.dp)) {
+                        IconButton(onClick = { plusOpen = true }) {
                             Icon(Icons.Default.Add, "Datei hinzufügen")
                         }
                         DropdownMenu(expanded = plusOpen, onDismissRequest = { plusOpen = false }) {
@@ -682,26 +697,15 @@ private fun InputBar(
                             )
                         }
                     }
-                    IconButton(onClick = vm::toggleWeb, modifier = Modifier.padding(bottom = 4.dp)) {
+                    IconButton(onClick = vm::toggleWeb) {
                         Icon(
                             Icons.Default.Language, if (ui.webSearch) "Websuche aus" else "Websuche an",
                             tint = if (ui.webSearch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         )
                     }
-                    TextField(
-                        value = text, onValueChange = { text = it },
-                        placeholder = { Text(when { dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
-                        maxLines = 6,
-                        modifier = Modifier.weight(1f),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                            focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                            unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                        ),
-                    )
+                    Spacer(Modifier.weight(1f))
                     if (!ui.generating) {
-                        IconButton(onClick = dictate, modifier = Modifier.padding(bottom = 4.dp)) {
+                        IconButton(onClick = dictate) {
                             Icon(
                                 if (dictating) Icons.Default.MicOff else Icons.Default.Mic, "Diktieren",
                                 tint = if (dictating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
