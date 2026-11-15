@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
 import de.foldki.app.voice.VoiceController
+import de.foldki.app.voice.Supertonic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.mutableFloatStateOf
@@ -655,6 +656,11 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
     var pitch by remember { mutableFloatStateOf(vm.settings.ttsPitch) }
     val voices = remember { vm.voice.germanVoices() }
+    var ttsEngine by remember { mutableStateOf(vm.settings.ttsEngine) }
+    var stVoice by remember { mutableStateOf(vm.settings.stVoice) }
+    val stStatus by vm.stStatus.collectAsStateWithLifecycle()
+    val stBusy by vm.stBusy.collectAsStateWithLifecycle()
+    val stReady = stStatus == "Supertonic ist eingerichtet." || vm.voice.supertonic.isReady
     DisposableEffect(Unit) { onDispose { vm.voice.stopSpeaking(); vm.voice.resetVoice() } }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -687,6 +693,48 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                 }
                 item {
                     Spacer(Modifier.height(16.dp))
+                    Text("Stimmen-Motor", fontWeight = FontWeight.Medium)
+                    Row(Modifier.fillMaxWidth().clickable { ttsEngine = "supertonic" }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = ttsEngine == "supertonic", onClick = { ttsEngine = "supertonic" })
+                        Text("Supertonic – Elena, Tessa, Caleb (natürlich, offline)")
+                    }
+                    Row(Modifier.fillMaxWidth().clickable { ttsEngine = "android" }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = ttsEngine == "android", onClick = { ttsEngine = "android" })
+                        Text("Android-Stimme (Samsung/Google)")
+                    }
+                }
+                if (ttsEngine == "supertonic") {
+                    item {
+                        Text(stStatus, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (stBusy) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                TextButton(onClick = vm::cancelSupertonic) { Text("Abbrechen") }
+                            } else {
+                                TextButton(onClick = vm::setupSupertonic) {
+                                    Text(if (stReady) "Neu laden / reparieren" else "Supertonic einrichten (ca. 250 MB)")
+                                }
+                            }
+                        }
+                    }
+                    items(Supertonic.VOICES.keys.toList()) { key ->
+                        val label = Supertonic.VOICES.getValue(key).second
+                        Row(Modifier.fillMaxWidth().clickable { stVoice = key }, verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = stVoice == key, onClick = { stVoice = key })
+                            Text(label, modifier = Modifier.weight(1f))
+                            IconButton(
+                                enabled = stReady && !stBusy,
+                                onClick = { vm.voice.rate = rate; vm.voice.previewSupertonic(key) { vm.notify("Supertonic: $it") } },
+                            ) { Icon(Icons.Default.PlayArrow, "Probehören") }
+                        }
+                    }
+                    item {
+                        Text("Tempo: ${"%.1f".format(rate)}×", fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+                        Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.6f..1.6f)
+                    }
+                }
+                if (ttsEngine == "android") item {
+                    Spacer(Modifier.height(8.dp))
                     Text("Stimme zum Vorlesen", fontWeight = FontWeight.Medium)
                     Row(Modifier.fillMaxWidth().clickable { voiceName = "" }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = voiceName.isBlank(), onClick = { voiceName = "" })
@@ -697,7 +745,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                items(voices.size) { i ->
+                if (ttsEngine == "android") items(voices.size) { i ->
                     val v = voices[i]
                     Row(Modifier.fillMaxWidth().clickable { voiceName = v.name }, verticalAlignment = Alignment.CenterVertically) {
                         RadioButton(selected = voiceName == v.name, onClick = { voiceName = v.name })
@@ -714,7 +762,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                         }
                     }
                 }
-                item {
+                if (ttsEngine == "android") item {
                     Text("Tempo: ${"%.1f".format(rate)}×", fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
                     Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.5f..2f)
                     Text("Tonhöhe: ${"%.1f".format(pitch)}", fontSize = 13.sp)
@@ -737,7 +785,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); vm.saveVoice(voiceName, rate, pitch); onDismiss() }) { Text("Speichern") } },
+        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); vm.saveVoice(voiceName, rate, pitch); vm.saveSupertonic(ttsEngine, stVoice); onDismiss() }) { Text("Speichern") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
 }

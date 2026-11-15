@@ -50,6 +50,37 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val attachments = Attachments(app)
     val voice = de.foldki.app.voice.VoiceController(app).apply {
         voiceName = settings.ttsVoice; rate = settings.ttsRate; pitch = settings.ttsPitch
+        engine = settings.ttsEngine; supertonicVoice = settings.stVoice
+    }
+
+    // Supertonic setup (one-time ~250 MB download)
+    private val _stStatus = MutableStateFlow(if (voice.supertonic.isReady) "Supertonic ist eingerichtet." else "Noch nicht eingerichtet.")
+    val stStatus: StateFlow<String> = _stStatus.asStateFlow()
+    private val _stBusy = MutableStateFlow(false)
+    val stBusy: StateFlow<Boolean> = _stBusy.asStateFlow()
+    private var stJob: Job? = null
+
+    fun setupSupertonic() {
+        if (_stBusy.value) return
+        _stBusy.value = true
+        stJob = viewModelScope.launch {
+            try {
+                voice.supertonic.prepare { line -> _stStatus.value = line }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _stStatus.value = "Abgebrochen."
+            } catch (e: Throwable) {
+                _stStatus.value = "Fehler: ${e.message ?: e.javaClass.simpleName}"
+            } finally {
+                _stBusy.value = false
+            }
+        }
+    }
+
+    fun cancelSupertonic() { stJob?.cancel() }
+
+    fun saveSupertonic(engine: String, stVoice: String) {
+        settings.ttsEngine = engine; settings.stVoice = stVoice
+        voice.engine = engine; voice.supertonicVoice = stVoice
     }
 
     override fun onCleared() { voice.release() }

@@ -12,8 +12,10 @@ android {
         applicationId = "de.foldki.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.3.1"
+        versionCode = 7
+        versionName = "1.4"
+        // Galaxy Z Fold7 and all current phones are 64-bit ARM; keeps the APK small.
+        ndk { abiFilters += "arm64-v8a" }
     }
 
     // Fixed key, committed on purpose: every build must carry the same signature,
@@ -80,6 +82,9 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
+
+    // Supertonic 3 voices (Elena, Tessa, Caleb) on-device
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
 
     // Claude API (official Anthropic Java SDK)
     implementation("com.anthropic:anthropic-java:3.8.0")

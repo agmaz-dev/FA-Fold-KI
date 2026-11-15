@@ -27,6 +27,15 @@ class Settings(context: Context) {
         get() = prefs.getString("tts_voice", "") ?: ""
         set(v) = prefs.edit().putString("tts_voice", v).apply()
 
+    /** "android" or "supertonic" */
+    var ttsEngine: String
+        get() = prefs.getString("tts_engine", "supertonic") ?: "supertonic"
+        set(v) = prefs.edit().putString("tts_engine", v).apply()
+
+    var stVoice: String
+        get() = prefs.getString("st_voice", "tessa") ?: "tessa"
+        set(v) = prefs.edit().putString("st_voice", v).apply()
+
     var ttsRate: Float
         get() = prefs.getFloat("tts_rate", 1f)
         set(v) = prefs.edit().putFloat("tts_rate", v).apply()

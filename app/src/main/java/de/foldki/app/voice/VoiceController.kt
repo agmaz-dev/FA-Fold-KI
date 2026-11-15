@@ -79,6 +79,13 @@ class VoiceController(context: Context) {
     /** Restores the chosen voice after a preview. */
     fun resetVoice() = applyVoiceSettings()
 
+    /** Supertonic voices (Elena, Tessa, Caleb). Used when [engine] is "supertonic" and the model is installed. */
+    val supertonic = Supertonic(app)
+    var engine: String = "android"
+    var supertonicVoice: String = Supertonic.DEFAULT_VOICE
+
+    val useSupertonic: Boolean get() = engine == "supertonic" && supertonic.isReady
+
     val recognitionAvailable: Boolean get() = SpeechRecognizer.isRecognitionAvailable(app)
 
     /**
@@ -131,6 +138,24 @@ class VoiceController(context: Context) {
     /** Reads [text] aloud in chunks; [onDone] runs when finished (or right away if TTS is unavailable). */
     fun speak(text: String, onDone: () -> Unit = {}) {
         stopSpeaking()
+        if (useSupertonic && text.isNotBlank()) {
+            supertonic.speak(text, supertonicVoice, rate, onDone) { err ->
+                // Fall back to the Android voice if Supertonic fails.
+                android.util.Log.w("FoldKI", "Supertonic: $err")
+                speakAndroid(text, onDone)
+            }
+            return
+        }
+        speakAndroid(text, onDone)
+    }
+
+    /** Short sample with a Supertonic voice. */
+    fun previewSupertonic(voice: String, onError: (String) -> Unit) {
+        stopSpeaking()
+        supertonic.speak("Hallo, ich bin ${Supertonic.VOICES[voice]?.second?.substringBefore(" (") ?: voice}. Wie kann ich dir helfen?", voice, rate, {}, onError)
+    }
+
+    private fun speakAndroid(text: String, onDone: () -> Unit) {
         if (!ttsReady || text.isBlank()) { onDone(); return }
         onSpeechDone = onDone
         val chunks = chunk(text, minOf(TextToSpeech.getMaxSpeechInputLength() - 50, 3000))
@@ -141,14 +166,16 @@ class VoiceController(context: Context) {
         }
     }
 
-    val isSpeaking: Boolean get() = ttsReady && tts.isSpeaking
+    val isSpeaking: Boolean get() = (ttsReady && tts.isSpeaking) || supertonic.isPlaying
 
     fun stopSpeaking() {
         onSpeechDone = null
+        supertonic.stop()
         if (ttsReady) tts.stop()
     }
 
     fun release() {
+        supertonic.stop()
         cancelListening()
         tts.stop(); tts.shutdown()
     }
