@@ -134,16 +134,32 @@ fun ChatApp(vm: ChatViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     var showSettings by remember { mutableStateOf(false) }
 
+    // Divider position for the unfolded layout, restored from the last session (stored on the device only).
+    val split = rememberSplitPaneState(
+        when (vm.settings.splitCollapse) {
+            PaneCollapse.FIRST.name -> 0f
+            PaneCollapse.SECOND.name -> 1f
+            else -> vm.settings.splitFraction
+        }
+    )
+
     BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        val wide = maxWidth >= 600.dp // Fold7 unfolded / tablets: sidebar always visible
+        val wide = maxWidth >= 600.dp // Fold7 unfolded / tablets: two panes with a draggable divider
         if (wide) {
-            Row(Modifier.fillMaxSize()) {
-                Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.width(300.dp).fillMaxHeight()) {
-                    Sidebar(ui, vm, onSettings = { showSettings = true }, onPicked = {})
-                }
-                VerticalDivider(color = MaterialTheme.colorScheme.outline)
-                ChatScreen(ui, vm, showMenu = false, onMenu = {}, onSettings = { showSettings = true })
-            }
+            val openSettings = { split.expandFirst(); showSettings = true }
+            SplitPane(
+                state = split,
+                modifier = Modifier.fillMaxSize(),
+                onSettled = { f, c -> vm.settings.splitFraction = f; vm.settings.splitCollapse = c.name },
+                first = {
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxSize()) {
+                        // Wide screen: settings open in the left pane; back arrow/gesture returns to the chat list.
+                        if (showSettings) SettingsScreen(vm, ui, onBack = { showSettings = false })
+                        else Sidebar(ui, vm, onSettings = openSettings, onPicked = {})
+                    }
+                },
+                second = { ChatScreen(ui, vm, showMenu = false, onMenu = {}, onSettings = openSettings) },
+            )
         } else {
             val drawer = rememberDrawerState(DrawerValue.Closed)
             val scope = rememberCoroutineScope()
@@ -158,15 +174,15 @@ fun ChatApp(vm: ChatViewModel) {
                 ChatScreen(ui, vm, showMenu = true, onMenu = { scope.launch { drawer.open() } }, onSettings = { showSettings = true })
             }
         }
-    }
 
-    // Settings slide in as a full-screen page; back arrow or back gesture returns to the chat.
-    AnimatedVisibility(
-        visible = showSettings,
-        enter = slideInHorizontally { it } + fadeIn(),
-        exit = slideOutHorizontally { it } + fadeOut(),
-    ) {
-        SettingsScreen(vm, ui, onBack = { showSettings = false })
+        // Folded: settings slide in as a full-screen page; back arrow or back gesture returns to the chat.
+        AnimatedVisibility(
+            visible = showSettings && !wide,
+            enter = slideInHorizontally { it } + fadeIn(),
+            exit = slideOutHorizontally { it } + fadeOut(),
+        ) {
+            SettingsScreen(vm, ui, onBack = { showSettings = false })
+        }
     }
 }
 

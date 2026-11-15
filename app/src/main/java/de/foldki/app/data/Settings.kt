@@ -40,6 +40,16 @@ class Settings(context: Context) {
         get() = prefs.getBoolean("web_search", false)
         set(v) = prefs.edit().putBoolean("web_search", v).apply()
 
+    /** Divider position in the unfolded layout (0..1; 0 = sidebar closed, 1 = chat closed). Only stored on the device. */
+    var splitFraction: Float
+        get() = prefs.getFloat("split_fraction", 1f / 3f).coerceIn(0f, 1f)
+        set(v) = prefs.edit().putFloat("split_fraction", v).apply()
+
+    /** "NONE", "FIRST" (sidebar closed) or "SECOND" (chat closed). */
+    var splitCollapse: String
+        get() = prefs.getString("split_collapse", "NONE") ?: "NONE"
+        set(v) = prefs.edit().putString("split_collapse", v).apply()
+
     /** Own name and address, used as sender in letters. */
     var sender: String
         get() = prefs.getString("sender", "") ?: ""
