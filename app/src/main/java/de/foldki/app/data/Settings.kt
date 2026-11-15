@@ -23,6 +23,18 @@ class Settings(context: Context) {
         get() = prefs.getString("system_prompt", DEFAULT_SYSTEM) ?: DEFAULT_SYSTEM
         set(v) = prefs.edit().putString("system_prompt", v).apply()
 
+    var ttsVoice: String
+        get() = prefs.getString("tts_voice", "") ?: ""
+        set(v) = prefs.edit().putString("tts_voice", v).apply()
+
+    var ttsRate: Float
+        get() = prefs.getFloat("tts_rate", 1f)
+        set(v) = prefs.edit().putFloat("tts_rate", v).apply()
+
+    var ttsPitch: Float
+        get() = prefs.getFloat("tts_pitch", 1f)
+        set(v) = prefs.edit().putFloat("tts_pitch", v).apply()
+
     var webSearch: Boolean
         get() = prefs.getBoolean("web_search", false)
         set(v) = prefs.edit().putBoolean("web_search", v).apply()

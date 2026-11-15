@@ -48,6 +48,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val nano = NanoEngine()
     private val claude = ClaudeEngine()
     val attachments = Attachments(app)
+    val voice = de.foldki.app.voice.VoiceController(app).apply {
+        voiceName = settings.ttsVoice; rate = settings.ttsRate; pitch = settings.ttsPitch
+    }
+
+    override fun onCleared() { voice.release() }
+
+    fun saveVoice(name: String, rate: Float, pitch: Float) {
+        settings.ttsVoice = name; settings.ttsRate = rate; settings.ttsPitch = pitch
+        voice.voiceName = name; voice.rate = rate; voice.pitch = pitch
+    }
     private var job: Job? = null
 
     private val _ui = MutableStateFlow(

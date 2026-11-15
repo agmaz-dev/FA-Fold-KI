@@ -17,6 +17,9 @@ import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.runtime.DisposableEffect
 import androidx.core.content.ContextCompat
 import de.foldki.app.voice.VoiceController
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Slider
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Close
@@ -282,8 +285,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
         ui.notice?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); vm.notify(null) }
     }
 
-    val voice = remember { VoiceController(context) }
-    DisposableEffect(Unit) { onDispose { voice.release() } }
+    val voice = vm.voice
     var voiceMode by rememberSaveable { mutableStateOf(false) }
     var afterMicGranted by remember { mutableStateOf<(() -> Unit)?>(null) }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -349,6 +351,16 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
             }
         }
         InputBar(ui, vm, voice, withMic, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
+    }
+}
+
+/** Google voice names often hint at the gender; Samsung names use f/m. */
+private fun voiceGender(name: String): String {
+    val n = name.lowercase()
+    return when {
+        n.contains("female") || Regex("smtf\\d|-f\\d|#female").containsMatchIn(n) -> " (weiblich)"
+        n.contains("male") || Regex("smtm\\d|-m\\d|#male").containsMatchIn(n) -> " (männlich)"
+        else -> ""
     }
 }
 
@@ -639,6 +651,11 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
     var model by remember { mutableStateOf(vm.settings.claudeModel) }
     var system by remember { mutableStateOf(vm.settings.systemPrompt) }
     var sender by remember { mutableStateOf(vm.settings.sender) }
+    var voiceName by remember { mutableStateOf(vm.settings.ttsVoice) }
+    var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
+    var pitch by remember { mutableFloatStateOf(vm.settings.ttsPitch) }
+    val voices = remember { vm.voice.germanVoices() }
+    DisposableEffect(Unit) { onDispose { vm.voice.stopSpeaking(); vm.voice.resetVoice() } }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Einstellungen") },
@@ -669,6 +686,41 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                     }
                 }
                 item {
+                    Spacer(Modifier.height(16.dp))
+                    Text("Stimme zum Vorlesen", fontWeight = FontWeight.Medium)
+                    Row(Modifier.fillMaxWidth().clickable { voiceName = "" }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = voiceName.isBlank(), onClick = { voiceName = "" })
+                        Text("Standard (Android-Einstellung)")
+                    }
+                    if (voices.isEmpty()) Text(
+                        "Keine deutschen Stimmen gefunden. Installiere sie unter Einstellungen → Allgemeine Verwaltung → Text-zu-Sprache.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                items(voices.size) { i ->
+                    val v = voices[i]
+                    Row(Modifier.fillMaxWidth().clickable { voiceName = v.name }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = voiceName == v.name, onClick = { voiceName = v.name })
+                        Column(Modifier.weight(1f)) {
+                            Text("Stimme ${i + 1}" + voiceGender(v.name), fontSize = 14.sp)
+                            Text(
+                                (if (v.isNetworkConnectionRequired) "online" else "offline") + " · " + v.name,
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        IconButton(onClick = { vm.voice.rate = rate; vm.voice.pitch = pitch; vm.voice.preview(v) }) {
+                            Icon(Icons.Default.PlayArrow, "Probehören")
+                        }
+                    }
+                }
+                item {
+                    Text("Tempo: ${"%.1f".format(rate)}×", fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+                    Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.5f..2f)
+                    Text("Tonhöhe: ${"%.1f".format(pitch)}", fontSize = 13.sp)
+                    Slider(value = pitch, onValueChange = { pitch = it }, valueRange = 0.5f..2f)
+                }
+                item {
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = sender, onValueChange = { sender = it },
@@ -685,7 +737,7 @@ private fun SettingsDialog(vm: ChatViewModel, ui: UiState, onDismiss: () -> Unit
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); onDismiss() }) { Text("Speichern") } },
+        confirmButton = { TextButton(onClick = { vm.saveSettings(key, model, system); vm.saveSender(sender); vm.saveVoice(voiceName, rate, pitch); onDismiss() }) { Text("Speichern") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
 }

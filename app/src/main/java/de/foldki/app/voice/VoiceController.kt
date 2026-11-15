@@ -8,6 +8,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import android.os.Handler
 import android.os.Looper
 import java.util.Locale
@@ -28,6 +29,7 @@ class VoiceController(context: Context) {
         ttsReady = status == TextToSpeech.SUCCESS
         if (ttsReady) {
             tts.language = Locale.GERMANY
+            applyVoiceSettings()
             tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) {}
                 override fun onDone(id: String?) {
@@ -38,6 +40,44 @@ class VoiceController(context: Context) {
             })
         }
     }
+
+    // Chosen voice, speed and pitch (applied as soon as the TTS engine is ready).
+    var voiceName: String = ""
+        set(v) { field = v; applyVoiceSettings() }
+    var rate: Float = 1f
+        set(v) { field = v; applyVoiceSettings() }
+    var pitch: Float = 1f
+        set(v) { field = v; applyVoiceSettings() }
+
+    private fun applyVoiceSettings() {
+        if (!ttsReady) return
+        tts.setSpeechRate(rate)
+        tts.setPitch(pitch)
+        if (voiceName.isNotBlank()) {
+            runCatching { tts.voices?.firstOrNull { it.name == voiceName }?.let { tts.voice = it } }
+        } else {
+            tts.language = Locale.GERMANY
+        }
+    }
+
+    /** German voices installed on the phone (offline ones first). */
+    fun germanVoices(): List<Voice> {
+        if (!ttsReady) return emptyList()
+        val all = runCatching { tts.voices?.toList().orEmpty() }.getOrDefault(emptyList())
+        val de = all.filter { it.locale.language == "de" && !it.features.orEmpty().contains("notInstalled") }
+        return de.sortedWith(compareBy({ it.isNetworkConnectionRequired }, { -it.quality }, { it.name }))
+    }
+
+    fun preview(v: Voice) {
+        if (!ttsReady) return
+        stopSpeaking()
+        tts.voice = v
+        tts.setSpeechRate(rate); tts.setPitch(pitch)
+        tts.speak("Hallo, so klinge ich. Wie kann ich dir helfen?", TextToSpeech.QUEUE_FLUSH, null, "preview")
+    }
+
+    /** Restores the chosen voice after a preview. */
+    fun resetVoice() = applyVoiceSettings()
 
     val recognitionAvailable: Boolean get() = SpeechRecognizer.isRecognitionAvailable(app)
 
