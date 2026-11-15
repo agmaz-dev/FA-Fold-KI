@@ -79,7 +79,7 @@ class VoiceController(context: Context) {
     /** Restores the chosen voice after a preview. */
     fun resetVoice() = applyVoiceSettings()
 
-    /** Supertonic voices (Elena, Tessa, Caleb). Used when [engine] is "supertonic" and the model is installed. */
+    /** Supertonic voices (Tessa, Caleb). Used when [engine] is "supertonic" and the model is installed. */
     val supertonic = Supertonic(app)
     var engine: String = "android"
     var supertonicVoice: String = Supertonic.DEFAULT_VOICE
