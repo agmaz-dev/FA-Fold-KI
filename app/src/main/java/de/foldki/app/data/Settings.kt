@@ -69,7 +69,7 @@ class Settings(context: Context) {
                 "erklär Dinge verständlich und frag nach, wenn etwas unklar ist. Halte Antworten so kurz wie passend. " +
                 "Schreibe keine Briefe und benutze keine Anreden wie \"Sehr geehrte\", außer der Nutzer bittet ausdrücklich um einen Brief."
 
-        /** Added to every system prompt so both engines write proper letters. */
+        /** Only added when the user asks for a letter. */
         const val LETTER_RULES = """
 Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.).
 1. Schreibe zuerst den vollständigen Brief nach DIN 5008 als reinen Text ohne Markdown, genau zwischen einer Zeile ---BRIEF--- und einer Zeile ---ENDE---.
@@ -84,11 +84,5 @@ Der Nutzer hat gerade ein Dokument oder Foto geschickt.
 Fasse es kurz und verständlich in 3 bis 5 Sätzen zusammen: worum geht es, was wird von ihm verlangt, gibt es Fristen.
 Frag dann locker, wie du helfen kannst – zum Beispiel ob du eine Antwort oder einen Widerspruch schreiben sollst.
 Keine Briefform, keine Anrede wie "Sehr geehrte"."""
-Der Nutzer möchte jetzt einen Brief bzw. ein Schreiben.
-Schreibe einen vollständigen, formellen Brief nach DIN 5008 als reinen Text ohne Markdown (keine Sternchen, keine Rauten).
-Aufbau: Absender, Empfänger, Ort und Datum, Betreff, Anrede, Brieftext, Grußformel, Name.
-Beziehe dich konkret auf das angehängte Schreiben (Aktenzeichen, Datum, Inhalt), wenn eines vorhanden ist.
-Fehlende Angaben markierst du mit [eckigen Klammern], z. B. [Aktenzeichen].
-Der Nutzer kann jede Antwort mit einem Tipp als PDF speichern."""
     }
 }
