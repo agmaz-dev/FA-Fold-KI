@@ -2,7 +2,6 @@ package de.foldki.app.ai
 
 import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import com.anthropic.core.JsonValue
-import com.anthropic.core.ObjectMappers
 import com.anthropic.models.messages.ContentBlockParam
 import com.anthropic.models.messages.MessageCreateParams
 import com.anthropic.models.messages.MessageParam
@@ -97,7 +96,7 @@ Regeln:
                     val results = ArrayList<ContentBlockParam>()
                     for (c in resp.content()) {
                         val use = c.toolUse().orElse(null) ?: continue
-                        val input = runCatching { JSONObject(ObjectMappers.jsonMapper().writeValueAsString(use._input())) }.getOrDefault(JSONObject())
+                        val input = runCatching { JSONObject(use._input().convert(Map::class.java) as Map<*, *>) }.getOrDefault(JSONObject())
                         var isError = false
                         val out = try {
                             when {
