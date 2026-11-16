@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -93,6 +94,21 @@ class SplitPaneState(initialFraction: Float) {
     /** Opens the left pane again if it is closed (e.g. to show the settings there). */
     fun expandFirst() { if (collapse == PaneCollapse.FIRST) fraction = defaultTarget() }
 
+    internal var onSettled: ((Float, PaneCollapse) -> Unit)? = null
+
+    /**
+     * Sidebar button (like the Grok Bots app): closes the left pane completely (chat full width),
+     * or opens it again at 1/3. Animated; the result is stored like after dragging.
+     */
+    fun toggleFirst(scope: CoroutineScope) {
+        val target = if (collapse == PaneCollapse.FIRST) defaultTarget() else 0f
+        anim?.cancel()
+        anim = scope.launch {
+            animate(fraction, target) { v, _ -> fraction = v }
+            onSettled?.invoke(fraction, collapse)
+        }
+    }
+
     companion object { const val DEFAULT_FRACTION = 1f / 3f }
 }
 
@@ -115,7 +131,7 @@ fun SplitPane(
     second: @Composable () -> Unit,
 ) {
     val hingeX = rememberVerticalHingeX()
-    SideEffect { state.hingeXInWindow = hingeX }
+    SideEffect { state.hingeXInWindow = hingeX; state.onSettled = onSettled }
     val scope = rememberCoroutineScope()
     fun settleTo(target: Float) {
         state.anim?.cancel()

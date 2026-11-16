@@ -71,6 +71,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
@@ -171,6 +172,8 @@ fun ChatApp(vm: ChatViewModel) {
         val wide = maxWidth >= 600.dp // Fold7 unfolded / tablets: two panes with a draggable divider
         if (wide) {
             val openSettings = { split.expandFirst(); showSettings = true }
+            val paneScope = rememberCoroutineScope()
+            val sidebarClosed by remember { androidx.compose.runtime.derivedStateOf { split.collapse == PaneCollapse.FIRST } }
             SplitPane(
                 state = split,
                 modifier = Modifier.fillMaxSize(),
@@ -183,7 +186,12 @@ fun ChatApp(vm: ChatViewModel) {
                     }
                 },
                 // Unfolded: the PDF preview fills the right pane, the chat list stays on the left.
-                second = { preview?.let { previewPane(it) } ?: ChatScreen(ui, vm, showMenu = false, onMenu = {}, onSettings = openSettings) },
+                second = {
+                    preview?.let { previewPane(it) } ?: ChatScreen(
+                        ui, vm, showMenu = false, onMenu = {}, onSettings = openSettings,
+                        sidebar = SidebarToggle(open = !sidebarClosed, toggle = { split.toggleFirst(paneScope) }),
+                    )
+                },
             )
         } else {
             val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -268,10 +276,19 @@ private fun Sidebar(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, onPi
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit) {
+private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, sidebar: SidebarToggle? = null) {
     var open by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (showMenu) IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Menü") } else Spacer(Modifier.width(12.dp))
+        when {
+            showMenu -> IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Menü") }
+            sidebar != null -> IconButton(onClick = sidebar.toggle) {
+                Icon(
+                    if (sidebar.open) Icons.AutoMirrored.Filled.MenuOpen else Icons.Default.Menu,
+                    if (sidebar.open) "Seitenleiste schließen" else "Seitenleiste öffnen",
+                )
+            }
+            else -> Spacer(Modifier.width(12.dp))
+        }
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             Row(
                 Modifier.clip(RoundedCornerShape(10.dp)).clickable { open = true }.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -349,8 +366,14 @@ private fun EmptyHello(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, m
     }
 }
 
+/** Unfolded only: button that closes/opens the chat list pane. */
+private class SidebarToggle(val open: Boolean, val toggle: () -> Unit)
+
 @Composable
-private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, onSettings: () -> Unit) {
+private fun ChatScreen(
+    ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, onSettings: () -> Unit,
+    sidebar: SidebarToggle? = null,
+) {
     val context = LocalContext.current
     val messages = ui.current?.messages.orEmpty()
     val listState = rememberLazyListState()
@@ -418,7 +441,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-        TopBar(ui, vm, showMenu, onMenu)
+        TopBar(ui, vm, showMenu, onMenu, sidebar)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             if (messages.isEmpty()) {
                 EmptyState(ui, vm, onSettings)
