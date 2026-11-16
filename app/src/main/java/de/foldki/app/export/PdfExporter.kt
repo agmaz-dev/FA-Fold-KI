@@ -117,11 +117,24 @@ object PdfExporter {
         doc.close()
     }
 
-    /** Creates the PDF in the cache and opens Android's share sheet (WhatsApp, E-Mail, Drive …). */
-    fun share(context: Context, text: String, fileName: String, signature: Bitmap? = null) {
-        val dir = File(context.cacheDir, "pdf").apply { mkdirs() }
+    /**
+     * Writes the PDF as a temporary file for the preview: cacheDir/pdf/<unique>/<fileName>, so the name the
+     * recipient sees stays readable. "Speichern" copies exactly this file.
+     */
+    fun writeToCache(context: Context, text: String, fileName: String, signature: Bitmap? = null): File {
+        val dir = File(File(context.cacheDir, "pdf"), java.util.UUID.randomUUID().toString()).apply { mkdirs() }
         val file = File(dir, fileName)
         file.outputStream().use { write(text, it, signature) }
+        return file
+    }
+
+    /** Copies the previewed file unchanged to [uri] (Storage Access Framework). */
+    fun copyTo(context: Context, file: File, uri: android.net.Uri) {
+        context.contentResolver.openOutputStream(uri)!!.use { out -> file.inputStream().use { it.copyTo(out) } }
+    }
+
+    /** Opens Android's share sheet for [file]. The file is not deleted right away, the receiving app still reads it. */
+    fun shareFile(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "application/pdf"
@@ -129,6 +142,30 @@ object PdfExporter {
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(send, "PDF teilen").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /** Removes one temporary preview file (and its folder). */
+    fun discard(file: File) {
+        runCatching { file.delete(); file.parentFile?.takeIf { it.name != "pdf" }?.delete() }
+    }
+
+    /** At app start: removes preview files older than [maxAgeMs] (shared ones had enough time to be read). */
+    fun cleanup(context: Context, maxAgeMs: Long = 6L * 60 * 60 * 1000) {
+        val root = File(context.cacheDir, "pdf")
+        val now = System.currentTimeMillis()
+        root.listFiles()?.forEach { f ->
+            if (now - f.lastModified() > maxAgeMs) runCatching { f.deleteRecursively() }
+        }
+    }
+
+    /** File name from the Betreff or the first short line. */
+    fun fileName(text: String): String {
+        val lines = clean(text).lines().map { it.trim() }
+        val first = lines.firstOrNull { it.startsWith("Betreff") }
+            ?: lines.firstOrNull { it.isNotBlank() }?.takeIf { it.length <= 50 && !it.endsWith(",") }
+            ?: "Fold-KI-Dokument"
+        val base = first.removePrefix("Betreff:").trim().take(40).replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "").trim()
+        return (base.ifBlank { "Fold-KI-Dokument" }) + ".pdf"
     }
 
     /** Removes simple Markdown so documents look clean in the chat and in the PDF. */

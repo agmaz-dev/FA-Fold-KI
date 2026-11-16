@@ -145,6 +145,28 @@ fun ChatApp(vm: ChatViewModel) {
         }
     )
 
+    val preview by vm.preview.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // "Speichern" in the preview: the user picks the place, the previewed file is copied unchanged.
+    // Registered here (stable place), so the result also arrives after folding/unfolding.
+    var saveFile by rememberSaveable { mutableStateOf<String?>(null) }
+    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val f = saveFile?.let { java.io.File(it) }
+        saveFile = null
+        if (uri != null && f != null) {
+            runCatching { PdfExporter.copyTo(context, f, uri) }
+                .onSuccess { vm.notify("PDF gespeichert") }
+                .onFailure { vm.notify("PDF konnte nicht gespeichert werden: ${it.message}") }
+        }
+    }
+    val previewPane: @Composable (ChatViewModel.PdfPreviewState) -> Unit = { st ->
+        PdfPreview(
+            vm, st,
+            onSave = { f, name -> saveFile = f.absolutePath; runCatching { savePdf.launch(name) }.onFailure { vm.notify("Speichern nicht möglich.") } },
+            onShare = { f -> runCatching { PdfExporter.shareFile(context, f) }.onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") } },
+        )
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val wide = maxWidth >= 600.dp // Fold7 unfolded / tablets: two panes with a draggable divider
         if (wide) {
@@ -160,7 +182,8 @@ fun ChatApp(vm: ChatViewModel) {
                         else Sidebar(ui, vm, onSettings = openSettings, onPicked = {})
                     }
                 },
-                second = { ChatScreen(ui, vm, showMenu = false, onMenu = {}, onSettings = openSettings) },
+                // Unfolded: the PDF preview fills the right pane, the chat list stays on the left.
+                second = { preview?.let { previewPane(it) } ?: ChatScreen(ui, vm, showMenu = false, onMenu = {}, onSettings = openSettings) },
             )
         } else {
             val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -185,6 +208,9 @@ fun ChatApp(vm: ChatViewModel) {
         ) {
             SettingsScreen(vm, ui, onBack = { showSettings = false })
         }
+
+        // Folded: the PDF preview is a full-screen page on top.
+        if (!wide) preview?.let { previewPane(it) }
     }
 }
 
@@ -350,27 +376,15 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
     }
     var speakingId by remember { mutableStateOf<String?>(null) }
 
-    // "Save as PDF": remember the text, then let the user choose where to store the file.
-    var pdfText by remember { mutableStateOf("") }
-    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.openOutputStream(uri)!!.use { PdfExporter.write(pdfText, it, vm.activeSignature()) }
-            }.onSuccess { vm.notify("PDF gespeichert") }
-                .onFailure { vm.notify("PDF konnte nicht gespeichert werden: ${it.message}") }
-        }
-    }
     val actions = MessageActions(
         copy = { text ->
             (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
                 .setPrimaryClip(android.content.ClipData.newPlainText("Text", text))
             vm.notify("Kopiert")
         },
-        savePdf = { text -> pdfText = vm.pdfText(text); savePdf.launch(pdfName(text)) },
-        sharePdf = { text ->
-            runCatching { PdfExporter.share(context, vm.pdfText(text), pdfName(text), vm.activeSignature()) }
-                .onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") }
-        },
+        // Every PDF and share button first shows the preview (save / share / change text / discard there).
+        savePdf = { text -> vm.openPreview(text) },
+        sharePdf = { text -> vm.openPreview(text) },
         speak = { id, text ->
             if (speakingId == id) { voice.stopSpeaking(); speakingId = null }
             else if (!voice.supertonic.isReady) { vm.notify("Bitte zuerst unter Einstellungen die Sprachfunktion einrichten (Tessa & Caleb)."); onSettings() }
@@ -423,15 +437,6 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
         }
         InputBar(ui, vm, voice, withMic, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
     }
-}
-
-private fun pdfName(text: String): String {
-    val lines = PdfExporter.clean(text).lines().map { it.trim() }
-    val first = lines.firstOrNull { it.startsWith("Betreff") }
-        ?: lines.firstOrNull { it.isNotBlank() }?.takeIf { it.length <= 50 && !it.endsWith(",") }
-        ?: "Fold-KI-Dokument"
-    val base = first.removePrefix("Betreff:").trim().take(40).replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "").trim()
-    return (base.ifBlank { "Fold-KI-Dokument" }) + ".pdf"
 }
 
 private class MessageActions(

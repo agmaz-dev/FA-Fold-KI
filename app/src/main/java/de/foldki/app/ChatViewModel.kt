@@ -135,6 +135,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         checkNano()
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { de.foldki.app.export.PdfExporter.cleanup(app) } }
         models.beforeDelete = { gemma.close() }
         viewModelScope.launch {
             models.state.collect { st ->
@@ -377,6 +378,66 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- PDF preview (before saving or sharing) ----
+    data class PdfPreviewState(
+        val text: String,
+        val fileName: String,
+        val file: java.io.File? = null,
+        val busy: Boolean = true,
+        val editing: Boolean = false,
+        /** Shared once: the temp file stays until the cleanup at a later start (the receiver still reads it). */
+        val shared: Boolean = false,
+    )
+    private val _preview = MutableStateFlow<PdfPreviewState?>(null)
+    val preview: StateFlow<PdfPreviewState?> = _preview.asStateFlow()
+    private var previewJob: Job? = null
+
+    /** Every PDF/share button goes through here: build the PDF (with date line + signature) and show it. */
+    fun openPreview(doc: String) {
+        val old = _preview.value
+        if (old?.file != null && !old.shared) de.foldki.app.export.PdfExporter.discard(old.file)
+        val text = pdfText(doc)
+        _preview.value = PdfPreviewState(text = text, fileName = de.foldki.app.export.PdfExporter.fileName(text))
+        renderPreview()
+    }
+
+    private fun renderPreview() {
+        val st = _preview.value ?: return
+        previewJob?.cancel()
+        previewJob = viewModelScope.launch {
+            val file = runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    de.foldki.app.export.PdfExporter.writeToCache(getApplication(), st.text, st.fileName, activeSignature())
+                }
+            }.getOrElse {
+                notify("PDF konnte nicht erstellt werden: ${it.message ?: it.javaClass.simpleName}")
+                _preview.value = null
+                return@launch
+            }
+            _preview.update { cur -> if (cur == null) { de.foldki.app.export.PdfExporter.discard(file); null } else cur.copy(file = file, busy = false, shared = false) }
+        }
+    }
+
+    fun editPreview(on: Boolean) = _preview.update { it?.copy(editing = on) }
+
+    /** "Text ändern" -> new PDF from the edited text, shown again. */
+    fun applyPreviewText(text: String) {
+        val st = _preview.value ?: return
+        if (st.file != null && !st.shared) de.foldki.app.export.PdfExporter.discard(st.file)
+        _preview.value = st.copy(text = DocumentParser.ensureDateLine(text.trim(), today(), settings.activeSender?.city), file = null, busy = true, editing = false)
+        renderPreview()
+    }
+
+    fun markPreviewShared() = _preview.update { it?.copy(shared = true) }
+
+    /** "Verwerfen" / back gesture. */
+    fun closePreview() {
+        previewJob?.cancel()
+        val st = _preview.value ?: return
+        if (st.file != null && !st.shared) de.foldki.app.export.PdfExporter.discard(st.file)
+        _preview.value = null
+    }
+
     fun toggleWeb() {
         val on = !_ui.value.webSearch
         settings.webSearch = on
@@ -479,7 +540,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } finally {
                 // No PDF from a half-written letter (stopped or failed).
-                if (finished) attachDocumentPdf(conv.id, botMsg.id, wantsLetter)
+                if (finished) attachDocumentPdf(conv.id, botMsg.id, wantsLetter, openPreview = !voice)
                 // Only the still-current job may end "generating" (a stopped job must not end the next one).
                 if (job == null || job === coroutineContext[Job]) _ui.update { it.copy(generating = false) }
                 persist()
@@ -488,7 +549,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Puts a finished letter (or a document the user asked for as letter) into the chat as a PDF. */
-    private fun attachDocumentPdf(convId: String, msgId: String, wantsLetter: Boolean) {
+    private fun attachDocumentPdf(convId: String, msgId: String, wantsLetter: Boolean, openPreview: Boolean = false) {
         val msg = _ui.value.conversations.firstOrNull { it.id == convId }?.messages?.firstOrNull { it.id == msgId } ?: return
         if (msg.isError) return
         val parts = DocumentParser.parse(msg.text)
@@ -496,6 +557,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (!parts.complete || !(wantsLetter || parts.isLetter)) return
         val pdf = runCatching { attachments.createPdf(pdfText(doc), activeSignature()) }.getOrNull() ?: return
         editMessage(convId, msgId) { it.copy(attachments = it.attachments + pdf) }
+        // A finished letter opens in the preview right away (check, save, share or change the text).
+        if (openPreview && (parts.isLetter || wantsLetter)) openPreview(doc)
     }
 
     /** The user's own names (never taken as recipient of a reply). */

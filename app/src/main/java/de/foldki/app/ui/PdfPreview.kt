@@ -1,0 +1,248 @@
+package de.foldki.app.ui
+
+import android.graphics.Bitmap
+import android.graphics.Color as AColor
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import de.foldki.app.ChatViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
+
+/**
+ * Preview of a PDF before it is saved or shared: pages one below the other, "Seite x von n", pinch zoom,
+ * Speichern / Teilen / Text ändern / Verwerfen. Back gesture = Verwerfen (in the editor: back to the preview).
+ * Folded it is a full-screen page with stacked buttons, unfolded it fills the right pane.
+ */
+@Composable
+fun PdfPreview(
+    vm: ChatViewModel,
+    state: ChatViewModel.PdfPreviewState,
+    onSave: (File, String) -> Unit,
+    onShare: (File) -> Unit,
+) {
+    if (state.editing) { PdfTextEditor(vm, state); return }
+    BackHandler { vm.closePreview() }
+    Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val narrow = maxWidth < 480.dp
+            Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+                val listState = rememberLazyListState()
+                var pageCount by remember(state.file) { mutableStateOf(0) }
+                val page by remember { derivedStateOf { listState.firstVisibleItemIndex + 1 } }
+                Row(Modifier.fillMaxWidth().height(56.dp).padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Vorschau", fontFamily = FontFamily.Serif, fontSize = 20.sp)
+                        Text(
+                            if (state.busy || pageCount == 0) state.fileName else "Seite ${page.coerceAtMost(pageCount)} von $pageCount · ${state.fileName}",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                        )
+                    }
+                    IconButton(onClick = vm::closePreview) { Icon(Icons.Default.Close, "Verwerfen") }
+                }
+                Box(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF8A8A8A)).clipToBounds(), contentAlignment = Alignment.Center) {
+                    val file = state.file
+                    if (state.busy || file == null) CircularProgressIndicator()
+                    else PdfPages(file, listState, onPageCount = { pageCount = it })
+                }
+                val enabled = !state.busy && state.file != null
+                val buttons: List<Triple<String, androidx.compose.ui.graphics.vector.ImageVector, () -> Unit>> = listOf(
+                    Triple("Speichern", Icons.Default.Save) { state.file?.let { onSave(it, state.fileName) } ?: Unit },
+                    Triple("Teilen", Icons.Default.Share) { state.file?.let { vm.markPreviewShared(); onShare(it) } ?: Unit },
+                    Triple("Text ändern", Icons.Default.Edit) { vm.editPreview(true) },
+                    Triple("Verwerfen", Icons.Default.Close) { vm.closePreview() },
+                )
+                if (narrow) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(onClick = buttons[0].third, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Icon(buttons[0].second, null, Modifier.size(18.dp)); Text("  " + buttons[0].first)
+                        }
+                        buttons.drop(1).forEach { (label, icon, action) ->
+                            OutlinedButton(onClick = action, enabled = enabled || label == "Verwerfen", modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                                Icon(icon, null, Modifier.size(18.dp)); Text("  $label")
+                            }
+                        }
+                    }
+                } else {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        buttons.forEachIndexed { i, (label, icon, action) ->
+                            val m = Modifier.weight(1f).heightIn(min = 48.dp)
+                            if (i == 0) Button(onClick = action, enabled = enabled, modifier = m) { Icon(icon, null, Modifier.size(18.dp)); Text(" $label", maxLines = 1) }
+                            else OutlinedButton(onClick = action, enabled = enabled || label == "Verwerfen", modifier = m) {
+                                Icon(icon, null, Modifier.size(18.dp)); Text(" $label", maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** "Text ändern": the document text in a full-width field; "Übernehmen" builds the PDF again. */
+@Composable
+private fun PdfTextEditor(vm: ChatViewModel, state: ChatViewModel.PdfPreviewState) {
+    var text by rememberSaveable(state.text) { mutableStateOf(state.text) }
+    BackHandler { vm.editPreview(false) }
+    Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Text ändern", fontFamily = FontFamily.Serif, fontSize = 20.sp)
+            OutlinedTextField(
+                value = text, onValueChange = { text = it },
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Serif),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { vm.editPreview(false) }, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Abbrechen") }
+                Button(onClick = { vm.applyPreviewText(text) }, enabled = text.isNotBlank(), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Übernehmen") }
+            }
+        }
+    }
+}
+
+/** Renders the pages with Android's PdfRenderer: one page open at a time, bitmaps ≤ 1400 px, freed off-screen. */
+@Composable
+private fun PdfPages(file: File, listState: androidx.compose.foundation.lazy.LazyListState, onPageCount: (Int) -> Unit) {
+    val mutex = remember(file) { Mutex() }
+    val renderer = remember(file) {
+        runCatching { PdfRenderer(ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)) }.getOrNull()
+    }
+    DisposableEffect(renderer) {
+        onDispose {
+            // Close only after a running page render has finished.
+            renderer?.let { r -> CoroutineScope(Dispatchers.IO).launch { mutex.withLock { runCatching { r.close() } } } }
+        }
+    }
+    if (renderer == null) { Text("Vorschau nicht möglich.", color = Color.White); return }
+    val count = remember(renderer) { runCatching { renderer.pageCount }.getOrDefault(0) }
+    LaunchedEffect(count) { onPageCount(count) }
+
+    var scale by remember(file) { mutableFloatStateOf(1f) }
+    var offsetX by remember(file) { mutableFloatStateOf(0f) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val widthPx = with(density) { (maxWidth - 24.dp).toPx() }.toInt().coerceIn(200, 1400)
+        val maxShift = with(density) { maxWidth.toPx() }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize()
+                // Pinch with two fingers zooms (1–4×) and moves sideways; one finger keeps scrolling the pages.
+                .pointerInput(file) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        do {
+                            val event = awaitPointerEvent()
+                            if (event.changes.count { it.pressed } >= 2) {
+                                scale = (scale * event.calculateZoom()).coerceIn(1f, 4f)
+                                val limit = maxShift * (scale - 1f) / 2f
+                                offsetX = if (scale == 1f) 0f else (offsetX + event.calculatePan().x).coerceIn(-limit, limit)
+                                event.changes.forEach { it.consume() }
+                            }
+                        } while (event.changes.any { it.pressed })
+                    }
+                }
+                .graphicsLayer { scaleX = scale; scaleY = scale; translationX = offsetX },
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            items(count) { i -> PdfPageImage(renderer, mutex, i, widthPx) }
+        }
+    }
+}
+
+@Composable
+private fun PdfPageImage(renderer: PdfRenderer, mutex: Mutex, index: Int, widthPx: Int) {
+    var bmp by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(renderer, index, widthPx) {
+        val b = withContext(Dispatchers.IO) {
+            runCatching {
+                mutex.withLock {
+                    renderer.openPage(index).use { p ->
+                        val w = widthPx
+                        val h = (w.toFloat() * p.height / p.width).toInt().coerceAtLeast(1)
+                        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                            it.eraseColor(AColor.WHITE)
+                            p.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        }
+                    }
+                }
+            }.getOrNull()
+        }
+        bmp = b
+    }
+    DisposableEffect(Unit) { onDispose { val b = bmp; bmp = null; b?.recycle() } }
+    val b = bmp
+    Box(Modifier.widthIn(max = 900.dp).fillMaxWidth().aspectRatio(b?.let { it.width.toFloat() / it.height } ?: (1f / 1.414f)).background(Color.White)) {
+        if (b != null && !b.isRecycled) Image(b.asImageBitmap(), "Seite ${index + 1}", contentScale = ContentScale.FillWidth, modifier = Modifier.fillMaxSize())
+    }
+}
