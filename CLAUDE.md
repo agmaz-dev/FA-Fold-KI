@@ -17,7 +17,7 @@
 - Antworten und App-Texte auf Deutsch.
 
 ## On-Device-Funktionen (ab 2.0)
-- **Gemini Nano ist immer Standard und Ersatz.** Gemma 4 E2B oder E4B (`ai/GemmaEngine.kt`, `ai/LocalModelManager.kt`, LiteRT-LM) ist optional und wählbar: einmaliger Download (E2B ~2,6 GB fest gepinnt; E4B ~3,7 GB, Größe/SHA-256 vor dem Download aus der Hugging-Face-API, dann geprüft), danach offline. Bei Fehler/Timeout/Hitze/Absturz → automatisch Nano. Keine weiteren Netzwerkzugriffe einbauen.
+- **Gemini Nano ist immer Standard und Ersatz.** Gemma 4 E2B (`ai/GemmaEngine.kt`, `ai/LocalModelManager.kt`, LiteRT-LM) ist optional: einmaliger Download (~2,6 GB, SHA-256 geprüft), danach offline. Bei Fehler/Timeout/Hitze/Absturz → automatisch Nano. Keine weiteren Netzwerkzugriffe einbauen.
 - Tagesstart (`brief/`): Kalender, aktive Benachrichtigungen, offene Punkte – nur lokal mit Nano, nie an Claude (`ChatMessage.localOnly`).
 - Briefe lesen wie FA-PDF: `export/LetterAnalysis.kt` (KI liest das Schreiben einmal: KURZ/BRIEFDATUM/FRIST/BETRAG/ABSENDER/BEZUG/ANSPRECHPARTNER/VORSCHLAG, ergänzt LetterMeta; Platzhalter füllen, Ende ergänzen, Antwort-Vorschläge, Absenderprofil pro Empfänger). Gemma bekommt ganze Dokumente (`NanoEngine.buildPrompt(large = true)`).
 - Briefe: `export/LetterMeta.kt` (Datum/Empfänger/Zeichen/Betreff aus Seite 1), Absenderprofile `data/SenderProfile.kt` + Unterschrift `data/SignatureStore.kt`, PDF-Vorschau `ui/PdfPreview.kt` (öffnet sich nach jedem Brief).

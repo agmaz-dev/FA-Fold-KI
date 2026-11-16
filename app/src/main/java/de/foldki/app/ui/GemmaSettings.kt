@@ -15,7 +15,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,11 +34,11 @@ import de.foldki.app.ai.LocalModelManager
 import de.foldki.app.ai.LocalModelManager.State
 
 /** Short status line for the card header. */
-fun gemmaSummary(ui: UiState, label: String = "Gemma 4"): String = when (val s = ui.gemma) {
-    State.NotDownloaded -> "$label · nicht geladen"
+fun gemmaSummary(ui: UiState): String = when (val s = ui.gemma) {
+    State.NotDownloaded -> "Gemma 4 E2B · nicht geladen"
     is State.Downloading -> "Download ${s.pct} %"
     is State.Verifying -> "Prüfe Datei ${s.pct} %"
-    State.Ready -> if (ui.gemmaEnabled) "$label · aktiv" else "$label · aus (Nano antwortet)"
+    State.Ready -> if (ui.gemmaEnabled) "Gemma 4 E2B · aktiv" else "Gemma 4 E2B · aus (Nano antwortet)"
     is State.Failed -> "Fehler – Nano antwortet"
 }
 
@@ -49,27 +48,10 @@ fun GemmaSettings(vm: ChatViewModel, ui: UiState) {
     var confirmDelete by remember { mutableStateOf(false) }
     val st = ui.gemma
     val free = remember(st) { vm.models.freeBytes() }
-    var selected by remember { mutableStateOf(vm.models.selectedId) }
-    val spec = remember(selected, st) { vm.models.spec }
-    val busy = st is State.Downloading || st is State.Verifying
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Modell wählen (Google Gemma 4, Apache 2.0)", fontSize = 14.sp)
-        listOf(
-            "e4b" to "Gemma 4 E4B – klüger, für Alltagsfragen und Gespräche (ca. 3,7 GB)",
-            "e2b" to "Gemma 4 E2B – kleiner und schneller (2,59 GB)",
-        ).forEach { (id, label) ->
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                    .toggleable(value = spec.id == id, enabled = !busy, role = Role.RadioButton) { vm.selectGemmaModel(id); selected = vm.models.selectedId },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = spec.id == id, onClick = null, enabled = !busy)
-                Spacer(Modifier.width(8.dp))
-                Text(label, fontSize = 14.sp)
-            }
-        }
+        Text("Gemma 4 E2B (Google, Apache 2.0)", fontSize = 14.sp)
         Text(
-            "Größe: ${if (spec.size > 0) LocalModelManager.gb(spec.size) else "ca. 3,7 GB"} · frei: ${LocalModelManager.gb(free)}",
+            "Größe: ${LocalModelManager.gb(LocalModelManager.SIZE)} · frei: ${LocalModelManager.gb(free)}",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
@@ -81,7 +63,7 @@ fun GemmaSettings(vm: ChatViewModel, ui: UiState) {
             State.NotDownloaded, is State.Failed -> {
                 if (st is State.Failed) Text(st.message, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                 Button(onClick = vm::downloadGemma, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                    Text("${spec.label} herunterladen")
+                    Text("Herunterladen (2,59 GB)")
                 }
                 Text("Geht über WLAN und Mobilfunk. Der Download läuft auch weiter, wenn die App zu ist.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -128,8 +110,8 @@ fun GemmaSettings(vm: ChatViewModel, ui: UiState) {
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("${spec.label} löschen?") },
-            text = { Text("Die Datei wird vom Handy entfernt. Danach antwortet wieder Gemini Nano. Du kannst Gemma später erneut herunterladen.") },
+            title = { Text("Gemma löschen?") },
+            text = { Text("Die Datei (2,59 GB) wird vom Handy entfernt. Danach antwortet wieder Gemini Nano. Du kannst Gemma später erneut herunterladen.") },
             confirmButton = {
                 TextButton(
                     onClick = { confirmDelete = false; vm.deleteGemma() },

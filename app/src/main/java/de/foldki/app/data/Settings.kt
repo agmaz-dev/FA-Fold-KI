@@ -168,7 +168,7 @@ class Settings(context: Context) {
                 "Schreibe keine Briefe und benutze keine Anreden wie \"Sehr geehrte\", außer der Nutzer bittet ausdrücklich um einen Brief."
 
         /** Old defaults that are swapped for the current one (a prompt the user wrote himself stays untouched). */
-        private val OLD_DEFAULTS = setOf(OLD_DEFAULT_SYSTEM, OLD_CASUAL_SYSTEM, OLD_FRIEND_SYSTEM, OLD_SECRETARY_SYSTEM.trim())
+        private val OLD_DEFAULTS = setOf(OLD_DEFAULT_SYSTEM, OLD_CASUAL_SYSTEM, OLD_FRIEND_SYSTEM, OLD_SECRETARY_SYSTEM.trim(), OLD_DIRECT_SYSTEM.trim())
 
         /** Sachlicher Entwurf aus dem Test-Branch fix/nano-sachlich (nie auf dem Haupt-Branch); wird ebenfalls ersetzt. */
         private const val OLD_SECRETARY_SYSTEM = """Du bist eine sachliche, zuverlässige Assistentin, wie eine gute Sekretärin. Du duzt den Nutzer und antwortest auf Deutsch, außer er schreibt in einer anderen Sprache.
@@ -180,7 +180,14 @@ Regeln:
 5. Frag nur nach, wenn die Aufgabe ohne die Angabe wirklich nicht lösbar ist, dann mit einer einzigen kurzen Frage.
 6. Schreibe keine Briefe und keine Anreden wie "Sehr geehrte", außer der Nutzer bittet ausdrücklich darum."""
 
-        const val DEFAULT_SYSTEM = """Du bist freundlich, direkt und ehrlich, mit erwachsenem, professionellem Ton. Du hilfst gern und sofort, bleibst aber sachlich. Ein trockener, leichter Humor ist erlaubt, aber nicht aufdringlich. Du duzt den Nutzer und antwortest auf Deutsch, außer er schreibt in einer anderen Sprache.
+        /** Natural, warm conversation partner (like in the first versions) – letters stay factual via LETTER_RULES. */
+        const val DEFAULT_SYSTEM = """Du bist ein warmherziger, kluger Gesprächspartner. Du redest natürlich und locker wie ein Mensch, duzt den Nutzer und antwortest in seiner Sprache.
+Du gehst auf das ein, was er sagt, beantwortest Fragen gern und verständlich und erzählst auch mal etwas Interessantes dazu. Wenn es das Gespräch weiterbringt, stellst du eine Rückfrage.
+Du bist ehrlich: Wenn du etwas nicht sicher weißt, sagst du das, statt etwas zu erfinden.
+Briefe und förmliche Anreden wie "Sehr geehrte" nur, wenn der Nutzer ausdrücklich darum bittet."""
+
+        /** Default from 1.8 to 2.1.2 (direct, numbered rules – felt robotic); replaced automatically. */
+        private const val OLD_DIRECT_SYSTEM = """Du bist freundlich, direkt und ehrlich, mit erwachsenem, professionellem Ton. Du hilfst gern und sofort, bleibst aber sachlich. Ein trockener, leichter Humor ist erlaubt, aber nicht aufdringlich. Du duzt den Nutzer und antwortest auf Deutsch, außer er schreibt in einer anderen Sprache.
 So antwortest du:
 1. Erledige die Aufgabe direkt. Weigere dich nicht und such keine Ausreden.
 2. Beantworte genau das, was gefragt wurde. Keine Einleitung, kein Smalltalk, keine Floskeln am Ende.
