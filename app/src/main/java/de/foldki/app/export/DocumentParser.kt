@@ -146,6 +146,62 @@ object DocumentParser {
         s.trimEnd()
     }
 
+    private const val MONTH = "januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember"
+    /** A line that is only a date, optionally with place: "16.11.2026", "Berlin, 16.11.2026", "Berlin, den 16. November 2026", "Datum: …". */
+    private val DATE_LINE = Regex(
+        "^[ \\t]*((datum\\s*:\\s*)|([A-ZÄÖÜ][\\p{L} .\\-/()]{1,40},\\s*(den\\s+)?))?" +
+            "(\\d{1,2}\\.\\s?\\d{1,2}\\.\\s?\\d{2,4}|\\d{1,2}\\.\\s*($MONTH)\\s+\\d{4})[ \\t]*$",
+        setOf(RegexOption.IGNORE_CASE),
+    )
+
+    /** Index of the date line of a letter (only above the salutation, so "Bescheid vom …" in a Betreff never counts), or -1. */
+    fun dateLineIndex(doc: String): Int {
+        val lines = doc.lines()
+        val sal = lines.indexOfFirst { SALUTATION.containsMatchIn(it) }.let { if (it < 0) lines.size else it }
+        return (0 until sal).firstOrNull { DATE_LINE.matches(lines[it]) } ?: -1
+    }
+
+    /**
+     * Safety net for finished letters: if the letter has no date line, today's date is put in front of the
+     * Betreff (or the salutation). Documents that are no letters and letters with a date stay unchanged.
+     */
+    fun ensureDateLine(doc: String, today: String, place: String? = null): String {
+        val lines = doc.lines().toMutableList()
+        val sal = lines.indexOfFirst { SALUTATION.containsMatchIn(it) }
+        if (sal < 0 || !CLOSING.containsMatchIn(doc)) return doc
+        if (dateLineIndex(doc) >= 0) return doc
+        val line = (place?.trim()?.takeIf { it.isNotEmpty() }?.let { "$it, " } ?: "") + today
+        val betreff = (0 until sal).firstOrNull { lines[it].trim().startsWith("Betreff", ignoreCase = true) || lines[it].trim().startsWith("Betr.", ignoreCase = true) }
+        val at = betreff ?: sal
+        if (at == 0) {
+            lines.add(0, ""); lines.add(0, line)
+        } else {
+            // keep one blank line before and after the date line
+            val insert = mutableListOf<String>()
+            if (lines[at - 1].isNotBlank()) insert += ""
+            insert += line; insert += ""
+            lines.addAll(at, insert)
+        }
+        return lines.joinToString("\n")
+    }
+
+    /** Where the signature goes: line of the closing formula and of the name below it. */
+    data class SignatureSlot(val closingLine: Int, val nameLine: Int)
+
+    /** Closing formula ("Mit freundlichen Grüßen") followed by a name line, in a letter; else null. */
+    fun signatureSlot(doc: String): SignatureSlot? {
+        val lines = doc.lines()
+        if (lines.none { SALUTATION.containsMatchIn(it) }) return null
+        val closing = lines.indexOfLast { CLOSING.matches(it) }
+        if (closing < 0) return null
+        var name = closing + 1
+        while (name < lines.size && lines[name].isBlank()) name++
+        if (name >= lines.size || name - closing > 4) return null
+        val n = lines[name].trim()
+        if (n.length > 60 || n.startsWith("Anlage", ignoreCase = true) || n.endsWith(".") && n.length > 30) return null
+        return SignatureSlot(closing, name)
+    }
+
     /** Text for the chat bubble: markers removed, Markdown cleaned. */
     fun display(text: String): String = clean(stripMarkers(text)).trim()
 

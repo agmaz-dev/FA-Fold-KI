@@ -36,6 +36,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,6 +49,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import de.foldki.app.ChatViewModel
 import de.foldki.app.UiState
 import de.foldki.app.data.Engine
@@ -56,33 +59,47 @@ import de.foldki.app.export.PdfExporter
 import de.foldki.app.export.DocumentParser
 import de.foldki.app.voice.VoiceController
 
-private enum class Phase { LISTENING, THINKING, SPEAKING, PAUSED }
+private enum class Phase { LISTENING, TRANSCRIBING, THINKING, SPEAKING, PAUSED }
 
 /** Full-screen voice conversation: listen → ask the AI → read the answer aloud → listen again. */
 @Composable
 fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose: () -> Unit) {
     var phase by remember { mutableStateOf(Phase.PAUSED) }
-    var heard by remember { mutableStateOf("") }
     var info by remember { mutableStateOf("") }
     var level by remember { mutableFloatStateOf(0f) }
+    // Every start/stop gets a new turn; late callbacks of an older turn are ignored (no double start).
+    var turn by remember { mutableIntStateOf(0) }
 
     fun startListening() {
-        heard = ""; info = ""; phase = Phase.LISTENING
-        val handleFinal: (String) -> Unit = { t ->
-            level = 0f
-            if (t.isBlank()) { phase = Phase.PAUSED; info = "Nichts verstanden – tippe zum Sprechen." }
-            else { heard = t; phase = Phase.THINKING; vm.send(t, voice = true) }
-        }
+        val my = ++turn
+        info = ""; level = 0f; phase = Phase.LISTENING
         voice.listen(
-            onPartial = { info = ""; heard = it; phase = Phase.THINKING },
-            onFinal = handleFinal,
-            onError = { msg -> level = 0f; phase = Phase.PAUSED; info = msg },
-            onLevel = { level = it },
+            onFinal = { t ->
+                if (turn == my) {
+                    level = 0f
+                    if (t.isBlank()) { phase = Phase.PAUSED; info = "Nichts verstanden – tippe zum Sprechen." }
+                    else { phase = Phase.THINKING; vm.send(t, voice = true) }
+                }
+            },
+            onError = { msg -> if (turn == my) { level = 0f; phase = Phase.PAUSED; info = msg } },
+            onLevel = { if (turn == my) level = it },
+            onTranscribing = { if (turn == my) { level = 0f; phase = Phase.TRANSCRIBING } },
+            onEnd = { if (turn == my) level = 0f },
         )
     }
 
+    /** Round stop button: ends recording, recognition, the answer and speech output at once. */
+    fun stopAll() {
+        turn++
+        voice.stopAll()
+        if (ui.generating) vm.stop()
+        level = 0f; phase = Phase.PAUSED
+    }
+
     LaunchedEffect(Unit) { startListening() }
-    DisposableEffect(Unit) { onDispose { voice.cancelListening(); voice.stopSpeaking() } }
+    DisposableEffect(Unit) { onDispose { voice.stopAll() } }
+    // App goes to the background (or the phone is locked): release microphone and speaker.
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (phase != Phase.PAUSED) stopAll() }
 
     // When the answer is complete, read it aloud and then listen again.
     LaunchedEffect(ui.generating) {
@@ -90,14 +107,13 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
             val last = ui.current?.messages?.lastOrNull()
             if (last != null && last.role == Role.ASSISTANT && !last.isError) {
                 phase = Phase.SPEAKING
-                voice.speak(DocumentParser.spoken(last.text)) { startListening() }
+                val my = turn
+                voice.speak(DocumentParser.spoken(last.text)) { if (turn == my && phase == Phase.SPEAKING) startListening() }
             } else {
                 phase = Phase.PAUSED; info = last?.text ?: "Keine Antwort."
             }
         }
     }
-
-    val answer = ui.current?.messages?.lastOrNull()?.takeIf { it.role == Role.ASSISTANT && phase != Phase.LISTENING }?.text.orEmpty()
 
     val pulse = rememberInfiniteTransition(label = "pulse")
     val breathe by pulse.animateFloat(
@@ -105,7 +121,7 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
     )
     val target = when (phase) {
         Phase.LISTENING -> 1f + level * 0.35f
-        Phase.THINKING, Phase.SPEAKING -> breathe
+        Phase.TRANSCRIBING, Phase.THINKING, Phase.SPEAKING -> breathe
         Phase.PAUSED -> 0.85f
     }
     val scale by animateFloatAsState(target, label = "scale")
@@ -125,10 +141,10 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = if (phase == Phase.PAUSED) 0.4f else 0.9f))
                     .clickable {
                         when (phase) {
-                            Phase.LISTENING -> voice.stopListening()
-                            Phase.SPEAKING -> { voice.stopSpeaking(); startListening() }
+                            Phase.LISTENING -> voice.stopListening() // done speaking: recognize and send
+                            Phase.SPEAKING -> { turn++; voice.stopSpeaking(); startListening() }
                             Phase.PAUSED -> startListening()
-                            Phase.THINKING -> {}
+                            Phase.TRANSCRIBING, Phase.THINKING -> {}
                         }
                     },
             )
@@ -136,38 +152,30 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
             Text(
                 when (phase) {
                     Phase.LISTENING -> "Ich höre zu…"
-                    Phase.THINKING -> "Denke nach…"
+                    Phase.TRANSCRIBING, Phase.THINKING -> "Denke nach…"
                     Phase.SPEAKING -> "Spreche – tippe zum Unterbrechen"
                     Phase.PAUSED -> "Tippe auf den Kreis zum Sprechen"
                 },
                 fontSize = 18.sp, fontFamily = FontFamily.Serif,
             )
             Spacer(Modifier.height(12.dp))
-            val shown = when {
-                info.isNotBlank() -> info
-                phase == Phase.LISTENING -> heard
-                answer.isNotBlank() -> DocumentParser.spoken(answer)
-                else -> heard
-            }
+            // No transcript in voice mode: neither the recognized words nor the answer as text
+            // (both stay in the chat). Only hints and errors are shown here.
             Text(
-                shown, textAlign = TextAlign.Center, maxLines = 6, overflow = TextOverflow.Ellipsis,
+                info, textAlign = TextAlign.Center, maxLines = 4, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.widthIn(max = 560.dp),
             )
             Spacer(Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(40.dp), modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Spacer(Modifier.weight(1f))
                 FilledTonalIconButton(
-                    onClick = {
-                        when (phase) {
-                            Phase.LISTENING -> voice.stopListening()
-                            Phase.SPEAKING -> voice.stopSpeaking().also { phase = Phase.PAUSED }
-                            Phase.THINKING -> { vm.stop(); phase = Phase.PAUSED }
-                            Phase.PAUSED -> startListening()
-                        }
-                    },
+                    onClick = { if (phase == Phase.PAUSED) startListening() else stopAll() },
                     modifier = Modifier.size(64.dp),
-                ) { Icon(if (phase == Phase.PAUSED) Icons.Default.Mic else Icons.Default.Stop, "Mikrofon") }
-                FilledTonalIconButton(onClick = onClose, modifier = Modifier.size(64.dp)) {
+                ) {
+                    if (phase == Phase.PAUSED) Icon(Icons.Default.Mic, "Sprechen")
+                    else Icon(Icons.Default.Stop, "Stopp")
+                }
+                FilledTonalIconButton(onClick = { stopAll(); onClose() }, modifier = Modifier.size(64.dp)) {
                     Icon(Icons.Default.Close, "Sprachmodus beenden")
                 }
                 Spacer(Modifier.weight(1f))

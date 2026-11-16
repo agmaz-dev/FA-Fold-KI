@@ -9,6 +9,9 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -46,6 +49,9 @@ class WhisperStt(context: Context) {
         private const val N_MELS = 80
         private const val N_FRAMES = 3000 // 30 s
         private const val N_SAMPLES = SAMPLE_RATE * 30
+        /** Pause after speech that ends the recording (was 1.2 s; shorter = text comes sooner). */
+        private const val END_SILENCE_MS = 900
+        private val THREADS = Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
 
         // Special tokens of the multilingual Whisper vocabulary
         private const val EOT = 50257
@@ -107,7 +113,7 @@ class WhisperStt(context: Context) {
     // ---------------------------------------------------------------- recording
 
     /**
-     * Records until the speaker pauses (~1.2 s silence after speech), max 30 s.
+     * Records until the speaker pauses (~0.9 s silence after speech), max 30 s.
      * [level] gets 0..1 for the animation. Returns 16 kHz mono samples, or empty if nobody spoke.
      * [stopNow] can be set to true from outside to end the recording early.
      */
@@ -128,10 +134,17 @@ class WhisperStt(context: Context) {
         var silentMs = 0; var waitedMs = 0
         try {
             rec.startRecording()
+            var failedReads = 0
             while (n + frame <= N_SAMPLES) {
                 coroutineContext.ensureActive()
+                if (stopNow()) break // also during the first 300 ms
                 val r = rec.read(buf, 0, frame)
-                if (r <= 0) continue
+                if (r <= 0) {
+                    // Microphone taken by another app or broken: give up instead of hanging.
+                    if (++failedReads > 20) throw IllegalStateException("Mikrofon liefert keine Daten.")
+                    continue
+                }
+                failedReads = 0
                 var sum = 0.0
                 for (i in 0 until r) { val v = buf[i] / 32768f; out[n + i] = v; sum += v * v }
                 n += r
@@ -141,8 +154,7 @@ class WhisperStt(context: Context) {
                 val threshold = max(min(floor, 0.02) * 2.5, 0.01)
                 level(((rms / (threshold * 4)).toFloat()).coerceIn(0f, 1f))
                 if (rms > threshold) { speech = true; silentMs = 0 } else if (speech) silentMs += 30 else waitedMs += 30
-                if (stopNow()) break
-                if (speech && silentMs >= 1200) break
+                if (speech && silentMs >= END_SILENCE_MS) break
                 if (!speech && waitedMs >= 8000) break
             }
         } finally {
@@ -153,8 +165,27 @@ class WhisperStt(context: Context) {
 
     // ---------------------------------------------------------------- transcription
 
-    /** Loads the model ahead of time (e.g. while the user is still speaking), so the answer comes faster. */
-    suspend fun warmUp() = withContext(Dispatchers.Default) { if (isReady) runCatching { load() } }
+    /**
+     * Loads the model ahead of time (when the app opens and while the user is still speaking),
+     * so the text appears sooner. Also prepares the lookup tables of the feature computation.
+     */
+    suspend fun warmUp() = withContext(Dispatchers.Default) {
+        if (!isReady) return@withContext
+        runCatching { load(); cosT; sinT; melFilters; unicodeToByte }
+    }
+
+    /** True while a model is loaded (kept warm for the next dictation). */
+    val isLoaded: Boolean get() = encoder != null
+
+    @Volatile private var busy = 0
+
+    /** Frees the model memory (Android asks for memory); it loads again on the next use. */
+    @Synchronized
+    fun release() {
+        if (busy > 0 || encoder == null) return
+        runCatching { encoder?.close() }; runCatching { decoder?.close() }
+        encoder = null; decoder = null; idToToken = null
+    }
 
     @Synchronized
     private fun load() {
@@ -163,7 +194,7 @@ class WhisperStt(context: Context) {
         val e = OrtEnvironment.getEnvironment()
         val opts = OrtSession.SessionOptions().apply {
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-            setIntraOpNumThreads(4)
+            setIntraOpNumThreads(THREADS)
         }
         encoder = e.createSession(File(dir, FILES[0]).absolutePath, opts)
         decoder = e.createSession(File(dir, FILES[1]).absolutePath, opts)
@@ -174,43 +205,52 @@ class WhisperStt(context: Context) {
         env = e
     }
 
+    @Synchronized
+    private fun acquire(): Triple<OrtSession, OrtSession, Array<String>> {
+        load(); busy++
+        return Triple(encoder!!, decoder!!, idToToken!!)
+    }
+
+    @Synchronized
+    private fun releaseBusy() { busy = (busy - 1).coerceAtLeast(0) }
+
     suspend fun transcribe(audio: FloatArray): String = withContext(Dispatchers.Default) {
         if (audio.isEmpty()) return@withContext ""
-        load()
-        val e = env!!
-        val mel = logMel(audio)
-        val hidden = OnnxTensor.createTensor(e, FloatBuffer.wrap(mel), longArrayOf(1, N_MELS.toLong(), N_FRAMES.toLong())).use { feats ->
-            encoder!!.run(mapOf("input_features" to feats)).use { r ->
-                val t = r.get(0) as OnnxTensor
-                val fb = t.floatBuffer
-                Pair(FloatArray(fb.remaining()).also { fb.get(it) }, t.info.shape)
-            }
-        }
-        val (hData, hShape) = hidden
-        val tokens = mutableListOf(SOT.toLong(), LANG_DE.toLong(), TRANSCRIBE.toLong(), NO_TIMESTAMPS.toLong())
-        val prompt = tokens.size
-        OnnxTensor.createTensor(e, FloatBuffer.wrap(hData), hShape).use { encStates ->
-            while (tokens.size < 200) {
-                coroutineContext.ensureActive()
-                val next = OnnxTensor.createTensor(e, LongBuffer.wrap(tokens.toLongArray()), longArrayOf(1, tokens.size.toLong())).use { ids ->
-                    decoder!!.run(mapOf("input_ids" to ids, "encoder_hidden_states" to encStates)).use { r ->
-                        val logits = r.get(0) as OnnxTensor
-                        val vocab = logits.info.shape[2].toInt()
-                        val fb = logits.floatBuffer
-                        val base = (tokens.size - 1) * vocab
-                        // Greedy: best normal text token or end-of-text; never timestamps/specials.
-                        var best = EOT; var bestV = fb.get(base + EOT)
-                        for (i in 0 until EOT) { val v = fb.get(base + i); if (v > bestV) { bestV = v; best = i } }
-                        best
+        val (enc, dec, vocabArr) = acquire()
+        try {
+            val e = env!!
+            val mel = logMel(audio)
+            val tokens = mutableListOf(SOT.toLong(), LANG_DE.toLong(), TRANSCRIBE.toLong(), NO_TIMESTAMPS.toLong())
+            val prompt = tokens.size
+            OnnxTensor.createTensor(e, FloatBuffer.wrap(mel), longArrayOf(1, N_MELS.toLong(), N_FRAMES.toLong())).use { feats ->
+                // The encoder output goes straight into the decoder (no copy into a new array).
+                enc.run(mapOf("input_features" to feats)).use { encOut ->
+                    val encStates = encOut.get(0) as OnnxTensor
+                    while (tokens.size < 200) {
+                        coroutineContext.ensureActive()
+                        val next = OnnxTensor.createTensor(e, LongBuffer.wrap(tokens.toLongArray()), longArrayOf(1, tokens.size.toLong())).use { ids ->
+                            dec.run(mapOf("input_ids" to ids, "encoder_hidden_states" to encStates)).use { r ->
+                                val logits = r.get(0) as OnnxTensor
+                                val vocab = logits.info.shape[2].toInt()
+                                val fb = logits.floatBuffer
+                                val base = (tokens.size - 1) * vocab
+                                // Greedy: best normal text token or end-of-text; never timestamps/specials.
+                                var best = EOT; var bestV = fb.get(base + EOT)
+                                for (i in 0 until EOT) { val v = fb.get(base + i); if (v > bestV) { bestV = v; best = i } }
+                                best
+                            }
+                        }
+                        if (next == EOT) break
+                        tokens += next.toLong()
+                        // Stop on obvious loops (same 4 tokens repeating)
+                        if (tokens.size > prompt + 12 && tokens.takeLast(4) == tokens.dropLast(4).takeLast(4)) break
                     }
                 }
-                if (next == EOT) break
-                tokens += next.toLong()
-                // Stop on obvious loops (same 4 tokens repeating)
-                if (tokens.size > prompt + 12 && tokens.takeLast(4) == tokens.dropLast(4).takeLast(4)) break
             }
+            decode(vocabArr, tokens.drop(prompt).map { it.toInt() }).trim()
+        } finally {
+            releaseBusy()
         }
-        decode(tokens.drop(prompt).map { it.toInt() }).trim()
     }
 
     // GPT-2 byte-level BPE: map the vocabulary's unicode characters back to bytes.
@@ -223,8 +263,7 @@ class WhisperStt(context: Context) {
         bs.indices.associate { cs[it].toChar() to bs[it] }
     }
 
-    private fun decode(ids: List<Int>): String {
-        val vocab = idToToken!!
+    private fun decode(vocab: Array<String>, ids: List<Int>): String {
         val bytes = java.io.ByteArrayOutputStream()
         ids.filter { it < EOT }.forEach { id -> vocab[id].forEach { ch -> unicodeToByte[ch]?.let { bytes.write(it) } } }
         return bytes.toString("UTF-8")
@@ -237,27 +276,40 @@ class WhisperStt(context: Context) {
     private val sinT by lazy { Array(N_FFT / 2 + 1) { k -> FloatArray(N_FFT) { n -> sin(2 * PI * k * n / N_FFT).toFloat() } } }
     private val melFilters: Array<FloatArray> by lazy { slaneyMel() }
 
-    /** Log-mel spectrogram exactly like openai/whisper (80 x 3000, padded to 30 s). */
-    private fun logMel(audio: FloatArray): FloatArray {
+    /**
+     * Log-mel spectrogram exactly like openai/whisper (80 x 3000, padded to 30 s).
+     * Only frames with audio are computed, split over several cores.
+     */
+    private suspend fun logMel(audio: FloatArray): FloatArray = coroutineScope {
         val samples = FloatArray(N_SAMPLES)
         audio.copyInto(samples, 0, 0, min(audio.size, N_SAMPLES))
+        val mel = FloatArray(N_MELS * N_FRAMES)
+        val lastSpeechFrame = min(N_FRAMES, audio.size / HOP + 3)
+        val silentLog = log10(1e-10).toFloat()
+        for (t in lastSpeechFrame until N_FRAMES) for (m in 0 until N_MELS) mel[m * N_FRAMES + t] = silentLog
+        val parts = THREADS.coerceAtMost(max(1, lastSpeechFrame / 50))
+        val step = (lastSpeechFrame + parts - 1) / parts
+        var maxV = (0 until parts).map { p ->
+            async(Dispatchers.Default) { melFrames(samples, mel, p * step, min(lastSpeechFrame, (p + 1) * step)) }
+        }.awaitAll().maxOrNull() ?: silentLog
+        if (maxV < silentLog) maxV = silentLog
+        val floor = maxV - 8f
+        for (i in mel.indices) mel[i] = (max(mel[i], floor) + 4f) / 4f
+        mel
+    }
+
+    /** Computes frames [from, to) into [mel]; returns the largest value. Each call has its own buffers. */
+    private fun melFrames(samples: FloatArray, mel: FloatArray, from: Int, to: Int): Float {
         val pad = N_FFT / 2
         fun at(i: Int): Float { // reflect padding (center=True)
             val j = when { i < 0 -> -i; i >= N_SAMPLES -> 2 * (N_SAMPLES - 1) - i; else -> i }
             return samples[j]
         }
         val bins = N_FFT / 2 + 1
-        val mel = FloatArray(N_MELS * N_FRAMES)
-        val lastSpeechFrame = min(N_FRAMES, audio.size / HOP + 3)
         val frameBuf = FloatArray(N_FFT)
         val power = FloatArray(bins)
         var maxV = -Float.MAX_VALUE
-        val silentLog = log10(1e-10).toFloat()
-        for (t in 0 until N_FRAMES) {
-            if (t >= lastSpeechFrame) {
-                for (m in 0 until N_MELS) mel[m * N_FRAMES + t] = silentLog
-                continue
-            }
+        for (t in from until to) {
             val start = t * HOP - pad
             for (n in 0 until N_FFT) frameBuf[n] = at(start + n) * window[n]
             for (k in 0 until bins) {
@@ -275,10 +327,7 @@ class WhisperStt(context: Context) {
                 if (v > maxV) maxV = v
             }
         }
-        if (maxV < silentLog) maxV = silentLog
-        val floor = maxV - 8f
-        for (i in mel.indices) mel[i] = (max(mel[i], floor) + 4f) / 4f
-        return mel
+        return maxV
     }
 
     /** librosa.filters.mel(sr=16000, n_fft=400, n_mels=80), Slaney scale and norm (as used by Whisper). */

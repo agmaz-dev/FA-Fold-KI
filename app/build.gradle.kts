@@ -12,8 +12,8 @@ android {
         applicationId = "de.foldki.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.9"
+        versionCode = 16
+        versionName = "2.0"
         // Galaxy Z Fold7 and all current phones are 64-bit ARM; keeps the APK small.
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -41,7 +41,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 
     buildFeatures { compose = true }
 
@@ -57,6 +56,12 @@ android {
                 "META-INF/*.version",
             )
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
@@ -78,6 +83,9 @@ dependencies {
     // Gemini Nano on-device (ML Kit GenAI Prompt API, via Android AICore)
     implementation("com.google.mlkit:genai-prompt:1.0.0-beta1")
 
+    // Optional Gemma 4 E2B on-device (LiteRT-LM). Pinned; needs Kotlin >= 2.3 (metadata 2.4).
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
+
     // Reading attachments: PDF text, OCR for photos/scans (offline), photo rotation
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
@@ -93,6 +101,8 @@ dependencies {
     implementation("androidx.window:window:1.5.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM unit tests (android.jar only has stubs)
+    testImplementation("org.json:json:20240303")
 }
 
 // Run the JVM unit tests (e.g. DocumentParser) in every CI build without touching the workflow.

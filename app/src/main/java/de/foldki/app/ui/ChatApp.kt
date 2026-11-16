@@ -71,6 +71,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuOpen
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
@@ -104,6 +105,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -132,6 +134,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatApp(vm: ChatViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
+    // Daily briefing: checked each time the app comes to the foreground (only 5–11 o'clock, once a day).
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { vm.onAppResumed(); onPauseOrDispose { } }
     var showSettings by remember { mutableStateOf(false) }
 
     // Divider position for the unfolded layout, restored from the last session (stored on the device only).
@@ -143,10 +147,34 @@ fun ChatApp(vm: ChatViewModel) {
         }
     )
 
+    val preview by vm.preview.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // "Speichern" in the preview: the user picks the place, the previewed file is copied unchanged.
+    // Registered here (stable place), so the result also arrives after folding/unfolding.
+    var saveFile by rememberSaveable { mutableStateOf<String?>(null) }
+    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val f = saveFile?.let { java.io.File(it) }
+        saveFile = null
+        if (uri != null && f != null) {
+            runCatching { PdfExporter.copyTo(context, f, uri) }
+                .onSuccess { vm.notify("PDF gespeichert") }
+                .onFailure { vm.notify("PDF konnte nicht gespeichert werden: ${it.message}") }
+        }
+    }
+    val previewPane: @Composable (ChatViewModel.PdfPreviewState) -> Unit = { st ->
+        PdfPreview(
+            vm, st,
+            onSave = { f, name -> saveFile = f.absolutePath; runCatching { savePdf.launch(name) }.onFailure { vm.notify("Speichern nicht möglich.") } },
+            onShare = { f -> runCatching { PdfExporter.shareFile(context, f) }.onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") } },
+        )
+    }
+
     BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         val wide = maxWidth >= 600.dp // Fold7 unfolded / tablets: two panes with a draggable divider
         if (wide) {
             val openSettings = { split.expandFirst(); showSettings = true }
+            val paneScope = rememberCoroutineScope()
+            val sidebarClosed by remember { androidx.compose.runtime.derivedStateOf { split.collapse == PaneCollapse.FIRST } }
             SplitPane(
                 state = split,
                 modifier = Modifier.fillMaxSize(),
@@ -158,7 +186,13 @@ fun ChatApp(vm: ChatViewModel) {
                         else Sidebar(ui, vm, onSettings = openSettings, onPicked = {})
                     }
                 },
-                second = { ChatScreen(ui, vm, showMenu = false, onMenu = {}, onSettings = openSettings) },
+                // Unfolded: the PDF preview fills the right pane, the chat list stays on the left.
+                second = {
+                    preview?.let { previewPane(it) } ?: ChatScreen(
+                        ui, vm, showMenu = false, onMenu = {}, onSettings = openSettings,
+                        sidebar = SidebarToggle(open = !sidebarClosed, toggle = { split.toggleFirst(paneScope) }),
+                    )
+                },
             )
         } else {
             val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -183,6 +217,9 @@ fun ChatApp(vm: ChatViewModel) {
         ) {
             SettingsScreen(vm, ui, onBack = { showSettings = false })
         }
+
+        // Folded: the PDF preview is a full-screen page on top.
+        if (!wide) preview?.let { previewPane(it) }
     }
 }
 
@@ -240,10 +277,19 @@ private fun Sidebar(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, onPi
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit) {
+private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, sidebar: SidebarToggle? = null) {
     var open by remember { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        if (showMenu) IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Menü") } else Spacer(Modifier.width(12.dp))
+        when {
+            showMenu -> IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Menü") }
+            sidebar != null -> IconButton(onClick = sidebar.toggle) {
+                Icon(
+                    if (sidebar.open) Icons.AutoMirrored.Filled.MenuOpen else Icons.Default.Menu,
+                    if (sidebar.open) "Seitenleiste schließen" else "Seitenleiste öffnen",
+                )
+            }
+            else -> Spacer(Modifier.width(12.dp))
+        }
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             Row(
                 Modifier.clip(RoundedCornerShape(10.dp)).clickable { open = true }.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -255,14 +301,14 @@ private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: ()
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    if (ui.engine == Engine.NANO) "Gemini Nano" else Settings.MODELS.firstOrNull { it.first == ui.model }?.second?.substringBefore(" (") ?: ui.model,
+                    if (ui.engine == Engine.NANO) (if (ui.gemmaActive) "Gemma 4" else "Gemini Nano") else Settings.MODELS.firstOrNull { it.first == ui.model }?.second?.substringBefore(" (") ?: ui.model,
                     fontWeight = FontWeight.Medium,
                 )
                 Text("  ▾", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 DropdownMenuItem(
-                    text = { Column { Text("Gemini Nano"); Text("Offline auf dem Gerät", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    text = { Column { Text(if (ui.gemmaActive) "Gemma 4 (Nano als Ersatz)" else "Gemini Nano"); Text("Offline auf dem Gerät", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                     leadingIcon = { Icon(Icons.Default.PhoneAndroid, null) },
                     onClick = { vm.setEngine(Engine.NANO); open = false },
                 )
@@ -284,8 +330,25 @@ private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: ()
 
 @Composable
 private fun EmptyState(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit) {
+    val brief by vm.brief.collectAsStateWithLifecycle()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val maxCard = maxHeight * 0.45f // folded: the briefing never takes more than ~45 % of the cover screen
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            brief?.let { b ->
+                BriefCard(
+                    b, onClose = vm::closeBrief, onOpenChat = vm::openBriefAsChat, onToggle = vm::toggleOpenItem,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = 680.dp).fillMaxWidth().heightIn(max = maxCard),
+                )
+            }
+            EmptyHello(ui, vm, onSettings, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun EmptyHello(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, modifier: Modifier) {
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -304,8 +367,14 @@ private fun EmptyState(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit) {
     }
 }
 
+/** Unfolded only: button that closes/opens the chat list pane. */
+private class SidebarToggle(val open: Boolean, val toggle: () -> Unit)
+
 @Composable
-private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, onSettings: () -> Unit) {
+private fun ChatScreen(
+    ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: () -> Unit, onSettings: () -> Unit,
+    sidebar: SidebarToggle? = null,
+) {
     val context = LocalContext.current
     val messages = ui.current?.messages.orEmpty()
     val listState = rememberLazyListState()
@@ -331,27 +400,15 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
     }
     var speakingId by remember { mutableStateOf<String?>(null) }
 
-    // "Save as PDF": remember the text, then let the user choose where to store the file.
-    var pdfText by remember { mutableStateOf("") }
-    val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.openOutputStream(uri)!!.use { PdfExporter.write(pdfText, it) }
-            }.onSuccess { vm.notify("PDF gespeichert") }
-                .onFailure { vm.notify("PDF konnte nicht gespeichert werden: ${it.message}") }
-        }
-    }
     val actions = MessageActions(
         copy = { text ->
             (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
                 .setPrimaryClip(android.content.ClipData.newPlainText("Text", text))
             vm.notify("Kopiert")
         },
-        savePdf = { text -> pdfText = text; savePdf.launch(pdfName(text)) },
-        sharePdf = { text ->
-            runCatching { PdfExporter.share(context, text, pdfName(text)) }
-                .onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") }
-        },
+        // Every PDF and share button first shows the preview (save / share / change text / discard there).
+        savePdf = { text -> vm.openPreview(text) },
+        sharePdf = { text -> vm.openPreview(text) },
         speak = { id, text ->
             if (speakingId == id) { voice.stopSpeaking(); speakingId = null }
             else if (!voice.supertonic.isReady) { vm.notify("Bitte zuerst unter Einstellungen die Sprachfunktion einrichten (Tessa & Caleb)."); onSettings() }
@@ -385,7 +442,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
-        TopBar(ui, vm, showMenu, onMenu)
+        TopBar(ui, vm, showMenu, onMenu, sidebar)
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
             if (messages.isEmpty()) {
                 EmptyState(ui, vm, onSettings)
@@ -402,17 +459,12 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
                 }
             }
         }
-        InputBar(ui, vm, voice, withMic, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
+        InputBar(
+            ui, vm, voice, withMic,
+            onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } },
+            onDictate = { voice.stopSpeaking(); speakingId = null },
+        )
     }
-}
-
-private fun pdfName(text: String): String {
-    val lines = PdfExporter.clean(text).lines().map { it.trim() }
-    val first = lines.firstOrNull { it.startsWith("Betreff") }
-        ?: lines.firstOrNull { it.isNotBlank() }?.takeIf { it.length <= 50 && !it.endsWith(",") }
-        ?: "Fold-KI-Dokument"
-    val base = first.removePrefix("Betreff:").trim().take(40).replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "").trim()
-    return (base.ifBlank { "Fold-KI-Dokument" }) + ".pdf"
 }
 
 private class MessageActions(
@@ -569,7 +621,11 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     }
                     Spacer(Modifier.weight(1f))
                     if (m.engine != null) Text(
-                        (if (m.engine == Engine.NANO) (if (m.web) "Gemini Nano · Web" else "Gemini Nano · offline") else "Claude · online") +
+                        (when (m.engine) {
+                            Engine.NANO -> if (m.web) "Gemini Nano · Web" else "Gemini Nano · offline"
+                            Engine.GEMMA -> if (m.web) "Gemma 4 · Web" else "Gemma 4 · offline"
+                            else -> "Claude · online"
+                        }) +
                             (if (m.web && m.engine == Engine.CLAUDE) " · Websuche" else ""),
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -582,22 +638,30 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
 @Composable
 private fun InputBar(
     ui: UiState, vm: ChatViewModel, voice: VoiceController,
-    withMic: (() -> Unit) -> Unit, onVoiceMode: () -> Unit,
+    withMic: (() -> Unit) -> Unit, onVoiceMode: () -> Unit, onDictate: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
     var dictating by remember { mutableStateOf(false) }
+    val listenPhase by voice.listenPhase.collectAsState()
+    val recognizing = dictating && listenPhase == VoiceController.ListenPhase.TRANSCRIBING
     val dictate = {
-        if (dictating) { voice.stopListening() } else withMic {
-            val before = text
-            dictating = true
-            voice.listen(
-                onPartial = { text = (before + " " + it).trim() },
-                onFinal = { t -> text = (before + " " + t).trim(); dictating = false },
-                onError = { msg -> dictating = false; vm.notify(msg) },
-            )
+        when {
+            recognizing -> voice.cancelListening() // stop also while recognizing: nothing is inserted
+            dictating -> voice.stopListening()     // end recording now, the text follows
+            else -> withMic {
+                val before = text
+                onDictate()
+                dictating = true
+                voice.listen(
+                    onFinal = { t -> if (t.isNotBlank()) text = (before + " " + t).trim() },
+                    onError = { msg -> vm.notify(msg) },
+                    onEnd = { dictating = false }, // always, also after cancel → never stuck
+                )
+            }
         }
     }
+    DisposableEffect(Unit) { onDispose { if (dictating) voice.cancelListening() } }
     var plusOpen by remember { mutableStateOf(false) }
     // Path survives if Android recreates the activity while the camera app is open.
     var cameraPath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -670,7 +734,7 @@ private fun InputBar(
                 // Text field over the full width (also on the narrow cover screen), buttons below it.
                 TextField(
                     value = text, onValueChange = { text = it },
-                    placeholder = { Text(when { dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
+                    placeholder = { Text(when { recognizing -> "Erkenne…"; dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
                     minLines = 1, maxLines = 5,
                     // Full width on top; at most ~5 lines, then it scrolls inside instead of pushing the chat up.
                     modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
@@ -722,8 +786,10 @@ private fun InputBar(
                     Spacer(Modifier.weight(1f))
                     if (!ui.generating) {
                         IconButton(onClick = dictate) {
-                            Icon(
-                                if (dictating) Icons.Default.MicOff else Icons.Default.Mic, "Diktieren",
+                            if (recognizing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(
+                                if (dictating) Icons.Default.MicOff else Icons.Default.Mic,
+                                if (dictating) "Diktat beenden" else "Diktieren",
                                 tint = if (dictating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }

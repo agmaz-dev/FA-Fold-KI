@@ -293,7 +293,8 @@ class Supertonic(context: Context) {
                         ensureActive()
                         var off = 0
                         while (off < pcm.size && isActive) {
-                            val w = t.write(pcm, off, pcm.size - off, AudioTrack.WRITE_BLOCKING)
+                            // Small slices, so a stop is noticed quickly.
+                            val w = t.write(pcm, off, min(4096, pcm.size - off), AudioTrack.WRITE_BLOCKING)
                             if (w <= 0) break
                             off += w
                         }
@@ -314,9 +315,13 @@ class Supertonic(context: Context) {
         }
     }
 
+    /**
+     * Stops speaking at once: silence (pause + flush), then stop() wakes a write that is still
+     * blocking, so the playback coroutine ends and releases the AudioTrack. onDone is not called.
+     */
     fun stop() {
         playJob?.cancel(); playJob = null
-        track?.let { runCatching { it.pause(); it.flush() } }
+        track?.let { runCatching { it.pause(); it.flush(); it.stop() } }
     }
 
     // ---------------------------------------------------------------- text
