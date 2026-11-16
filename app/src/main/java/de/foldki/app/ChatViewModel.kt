@@ -638,6 +638,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             recipient = original?.recipient ?: facts?.sender?.ifBlank { null },
             placeDate = listOfNotNull(profile?.city?.ifBlank { null }, today()).joinToString(", "),
             name = profile?.name?.ifBlank { null },
+            refs = listOfNotNull(
+                original?.docDate?.ifBlank { null }?.let { "Ihr Schreiben vom: $it" },
+                (original?.refNo ?: facts?.reference)?.ifBlank { null }?.let { "Ihr Zeichen: $it" },
+            ),
         )
         if (doc != rawDoc) editMessage(convId, msgId) { it.copy(text = it.text.replace(rawDoc, doc)) }
         de.foldki.app.export.LetterAnalysis.recipientKey(original?.recipient)?.let { key ->

@@ -37,6 +37,8 @@ object PdfExporter {
      * drawn between the closing formula and the name, and closing + signature + name are kept on one page.
      */
     fun write(text: String, out: OutputStream, signature: Bitmap? = null) {
+        // Letters get the FA-PDF head (DIN 5008 Form B: info block right, on the height of the address field).
+        LetterLayout.parse(text)?.let { LetterLayout.write(it, out, signature); return }
         val paint = TextPaint().apply {
             isAntiAlias = true
             textSize = 11f

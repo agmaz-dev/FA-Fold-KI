@@ -175,7 +175,7 @@ object LetterAnalysis {
      * The app builds the letter: sender block, recipient, place/date, subject, body, name.
      * Whatever the model wrote into the head (labels, addresses, broken dates) is dropped.
      */
-    fun assemble(doc: String, sender: String?, recipient: String?, placeDate: String, name: String?): String {
+    fun assemble(doc: String, sender: String?, recipient: String?, placeDate: String, name: String?, refs: List<String> = emptyList()): String {
         val lines = doc.replace("**", "").lines()
         val subjIdx = lines.indexOfFirst { it.trim().startsWith("Betreff", true) }
         val salIdx = lines.indices.firstOrNull { it > subjIdx && SALUTATION.containsMatchIn(lines[it]) }
@@ -190,6 +190,7 @@ object LetterAnalysis {
         return buildString {
             sender?.trim()?.takeIf { it.isNotEmpty() }?.let { append(it).append("\n\n") }
             recipient?.trim()?.takeIf { it.isNotEmpty() }?.let { append(it).append("\n\n") }
+            refs.filter { it.isNotBlank() }.forEach { append(it.trim()).append("\n") }
             append(placeDate).append("\n\n")
             if (subject.isNotBlank()) append("Betreff: ").append(subject).append("\n\n")
             append(body)
