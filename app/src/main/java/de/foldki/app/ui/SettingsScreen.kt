@@ -1,7 +1,24 @@
 package de.foldki.app.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,7 +79,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     var model by remember { mutableStateOf(vm.settings.claudeModel) }
     var system by remember { mutableStateOf(vm.settings.systemPrompt) }
     // Sub-page: edit a sender profile (folded full screen, unfolded inside the left pane).
-    var editProfile by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var editProfile by rememberSaveable { mutableStateOf<String?>(null) }
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
     var stVoice by remember { mutableStateOf(vm.settings.stVoice) }
     val stStatus by vm.stStatus.collectAsStateWithLifecycle()
@@ -87,11 +104,40 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                 Text("Einstellungen", fontFamily = FontFamily.Serif, fontSize = 22.sp)
             }
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+                val openCards = rememberSaveable(saver = androidx.compose.runtime.saveable.listSaver(
+                    save = { it.value.toList() }, restore = { mutableStateOf(it.toSet()) },
+                )) { mutableStateOf(emptySet<String>()) }
+                androidx.compose.runtime.CompositionLocalProvider(LocalOpenCards provides openCards) {
                 Column(
-                    Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Section("Sprache – Tessa & Caleb") {
+                    // Collapsible cards (like the Grok app): tap the header to open or close a card.
+                    Card("nano", Icons.Default.PhoneAndroid, "Gemini Nano", if (ui.nanoReady) "Bereit · offline · Standard" else ui.nanoStatus) {
+                        Text(ui.nanoStatus, fontSize = 14.sp)
+                        Hint("Gemini Nano läuft auf dem Handy und ist immer Standard und Ersatz, auch wenn Gemma eingeschaltet ist.")
+                    }
+                    Card("claude", Icons.Default.Cloud, "Claude (online)", if (key.isBlank()) "Kein API-Schlüssel" else Settings.MODELS.firstOrNull { it.first == model }?.second ?: model) {
+                        OutlinedTextField(
+                            value = key, onValueChange = { key = it },
+                            label = { Text("API-Schlüssel") },
+                            placeholder = { Text("sk-ant-…") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Hint("Erhältlich unter console.anthropic.com. Wird nur auf diesem Gerät gespeichert.")
+                        Settings.MODELS.forEach { (id, label) ->
+                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { model = id }, verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = model == id, onClick = { model = id })
+                                Text(label)
+                            }
+                        }
+                    }
+                    Card("gemma", Icons.Default.Memory, "Optionale On-Device-Modelle", gemmaSummary(ui)) { GemmaSettings(vm, ui) }
+                    Card("brief", Icons.Default.WbSunny, "Tagesstart (offline)", briefSummary(vm)) { BriefSettings(vm) }
+                    Card("sender", Icons.Default.Draw, "Briefe – Absender", senderSummary(vm)) { SenderProfilesList(vm, onEdit = { editProfile = it }) }
+                    Card("voice", Icons.Default.RecordVoiceOver, "Stimme – Tessa & Caleb", if (stReady) "Eingerichtet · " + (Supertonic.VOICES[stVoice]?.second ?: stVoice) else "Noch nicht eingerichtet") {
                         Hint("Sprechen und Zuhören laufen komplett auf dem Handy, ohne Samsung- oder Google-Dienste.")
                         Text(stStatus, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -105,7 +151,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                             }
                         }
                         Supertonic.VOICES.forEach { (id, v) ->
-                            Row(Modifier.fillMaxWidth().clickable { stVoice = id }, verticalAlignment = Alignment.CenterVertically) {
+                            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { stVoice = id }, verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(selected = stVoice == id, onClick = { stVoice = id })
                                 Text(v.second, modifier = Modifier.weight(1f))
                                 IconButton(
@@ -117,36 +163,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                         Text("Tempo: ${"%.1f".format(rate)}×", fontSize = 13.sp)
                         Slider(value = rate, onValueChange = { rate = it }, valueRange = 0.6f..1.6f)
                     }
-
-                    Section("Gemini Nano (offline)") {
-                        Text(ui.nanoStatus, fontSize = 14.sp)
-                    }
-
-                    Section("Claude (online)") {
-                        OutlinedTextField(
-                            value = key, onValueChange = { key = it },
-                            label = { Text("API-Schlüssel") },
-                            placeholder = { Text("sk-ant-…") },
-                            singleLine = true,
-                            visualTransformation = PasswordVisualTransformation(),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Hint("Erhältlich unter console.anthropic.com. Wird nur auf diesem Gerät gespeichert.")
-                        Settings.MODELS.forEach { (id, label) ->
-                            Row(Modifier.fillMaxWidth().clickable { model = id }, verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = model == id, onClick = { model = id })
-                                Text(label)
-                            }
-                        }
-                    }
-
-                    Section("Optionale On-Device-Modelle") { GemmaSettings(vm, ui) }
-
-                    Section("Tagesstart (offline)") { BriefSettings(vm) }
-
-                    Section("Briefe – Absender") { SenderProfilesList(vm, onEdit = { editProfile = it }) }
-
-                    Section("Persönlichkeit") {
+                    Card("system", Icons.Default.Tune, "Systemanweisung", if (system.trim() == Settings.DEFAULT_SYSTEM.trim()) "Standard" else "Eigene Anweisung") {
                         OutlinedTextField(
                             value = system, onValueChange = { system = it },
                             label = { Text("Anweisung an die KI") },
@@ -156,27 +173,57 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                     }
                     Spacer(Modifier.height(24.dp))
                 }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column {
-        Text(
-            title, fontWeight = FontWeight.Medium, fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
-        )
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+private fun Card(
+    id: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    summary: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val open = LocalOpenCards.current
+    val expanded = id in open.value
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.fillMaxWidth().animateContentSize(),
+    ) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                    .clickable(onClickLabel = if (expanded) "Zuklappen" else "Aufklappen") {
+                        open.value = if (expanded) open.value - id else open.value + id
+                    }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title, fontWeight = FontWeight.Medium, fontSize = 15.sp)
+                    Text(summary, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    if (expanded) "Zuklappen" else "Aufklappen",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            AnimatedVisibility(visible = expanded, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
+            }
         }
     }
 }
+
+/** Which cards are open (kept across rotation and folding). */
+private val LocalOpenCards = androidx.compose.runtime.staticCompositionLocalOf<androidx.compose.runtime.MutableState<Set<String>>> { error("no cards") }
 
 @Composable
 private fun Hint(text: String) {
