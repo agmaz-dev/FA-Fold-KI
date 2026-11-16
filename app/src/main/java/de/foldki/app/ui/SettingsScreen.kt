@@ -201,7 +201,11 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                                 "Bleibt auf dem Handy, bis du ihn teilst. Enthält deine Fragen und Antworten, aber keinen API-Schlüssel.",
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        TextButton(onClick = { runCatching { de.foldki.app.data.DebugLog.share(ctx, version) } }) { Text("Fehlerbericht teilen") }
+                        TextButton(onClick = {
+                            runCatching { de.foldki.app.data.DebugLog.copy(ctx, version) }
+                            vm.notify("Fehlerbericht kopiert – jetzt einfach im Chat einfügen")
+                        }) { Text("Fehlerbericht kopieren") }
+                        TextButton(onClick = { runCatching { de.foldki.app.data.DebugLog.share(ctx, version) } }) { Text("Als Datei teilen") }
                         TextButton(onClick = { de.foldki.app.data.DebugLog.clear(); vm.notify("Fehlerbericht geleert") }) { Text("Bericht leeren") }
                     }
                     Spacer(Modifier.height(24.dp))

@@ -59,15 +59,24 @@ object DebugLog {
 
     fun clear() { runCatching { file?.writeText("") } }
 
+    /** The whole report as text (header with version and device + all entries). */
+    fun text(appVersion: String): String = buildString {
+        append("Fold KI ").append(appVersion).append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
+        append(" · Android ").append(Build.VERSION.RELEASE).append("\n\n")
+        append(runCatching { file?.readText() }.getOrNull().orEmpty().ifBlank { "(noch keine Einträge)" })
+    }
+
+    /** Copies the report to the clipboard, so it can simply be pasted into a chat. */
+    fun copy(context: Context, appVersion: String) {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("Fold KI Fehlerbericht", text(appVersion)))
+    }
+
     /** Opens Android's share sheet with the report as a text file. */
     fun share(context: Context, appVersion: String) {
         val dir = File(File(context.cacheDir, "pdf"), "report").apply { mkdirs() }
         val out = File(dir, "FoldKI-Fehlerbericht.txt")
-        out.writeText(buildString {
-            append("Fold KI ").append(appVersion).append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
-            append(" · Android ").append(Build.VERSION.RELEASE).append("\n\n")
-            append(runCatching { file?.readText() }.getOrNull().orEmpty().ifBlank { "(noch keine Einträge)" })
-        })
+        out.writeText(text(appVersion))
         val uri = FileProvider.getUriForFile(context, context.packageName + ".files", out)
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
