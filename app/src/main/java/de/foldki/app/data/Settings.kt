@@ -31,10 +31,10 @@ class Settings(context: Context) {
 
     var systemPrompt: String
         get() = (prefs.getString("system_prompt", DEFAULT_SYSTEM) ?: DEFAULT_SYSTEM)
-            .let { if (it.isBlank() || it.trim() in OLD_DEFAULTS) DEFAULT_SYSTEM else it } // migrate old built-in defaults
+            .let { if (it.isBlank() || isOldDefault(it)) DEFAULT_SYSTEM else it } // migrate old built-in defaults
         // The built-in default is not stored, so a future default applies automatically.
         set(v) {
-            if (v.isBlank() || v.trim() == DEFAULT_SYSTEM.trim() || v.trim() in OLD_DEFAULTS) prefs.edit().remove("system_prompt").apply()
+            if (v.isBlank() || v.trim() == DEFAULT_SYSTEM.trim() || isOldDefault(v)) prefs.edit().remove("system_prompt").apply()
             else prefs.edit().putString("system_prompt", v).apply()
         }
 
@@ -142,6 +142,18 @@ class Settings(context: Context) {
     /** Keeps the old key "sender" equal to the active profile (older versions read it). */
     private fun syncLegacySender() {
         prefs.edit().putString("sender", activeSender?.toLegacyText().orEmpty()).apply()
+    }
+
+    /**
+     * Old built-in instruction, also when it was saved slightly changed or shortened (that happened on the device:
+     * the robotic "Du bist freundlich, direkt und ehrlich … So antwortest du:" stayed, the new persona never arrived).
+     */
+    private fun isOldDefault(text: String): Boolean {
+        val t = text.trim()
+        if (t in OLD_DEFAULTS) return true
+        return OLD_DEFAULTS.any { old -> old.length > 60 && t.startsWith(old.take(60)) } ||
+            t.startsWith("Du bist freundlich, direkt und ehrlich") || t.contains("So antwortest du:") ||
+            t.startsWith("Du bist eine sachliche, zuverlässige Assistentin") || t.startsWith("Du bist ein hilfreicher Assistent.")
     }
 
     companion object {

@@ -59,9 +59,14 @@ private val DOC_WORDS = Regex("pdf|dokument|liste|zusammenfassung|fass .* zusamm
 private val LETTER_WORDS = Regex(
     "brief|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|" +
         "ein schreiben|das schreiben|formelles schreiben|schreib (ihm|ihr|ihnen|denen|zurück)|antworte (ihm|ihr|ihnen|denen|darauf)|" +
-        "formulier",
+        "formulier|gegengeschreib|gegen-schreiben|antwortbrief|stellungnahme|fertig ?machen|schreiben fertig|fertigstellen|" +
+        "schreib (eine|einen|das|die) (antwort|widerspruch|stellungnahme)",
     RegexOption.IGNORE_CASE,
 )
+
+/** With a letter in the chat, these mean "write the reply" (rejecting, objecting, not paying …). */
+private val REPLY_INTENT = Regex("(nicht (be)?zahl|nicht begleich|lehne .* ab|ablehn|widersprech|antwort|zurückschreib|schreib)", RegexOption.IGNORE_CASE)
+private val JUST_READ = Regex("(was steht|zusammenfass|fass .* zusammen|erklär|worum geht|was bedeutet|was heißt)", RegexOption.IGNORE_CASE)
 
 const val READY = "Sprachfunktion ist eingerichtet."
 
@@ -535,8 +540,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // Document in the previous answer -> keep the rules for follow-ups like "mach es kürzer".
         val lastDoc = history.lastOrNull { it.role == Role.ASSISTANT && !it.isError }
             ?.let { DocumentParser.parse(it.text) }?.takeIf { it.document != null }
+        val hasLetterInChat = history.any { m -> m.attachments.any { it.analysis != null || it.docDate != null || it.recipient != null } }
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
-            .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true
+            .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true ||
+            (hasLetterInChat && REPLY_INTENT.containsMatchIn(prompt) && !JUST_READ.containsMatchIn(prompt))
         val sentDoc = pendingFiles.isNotEmpty() && !wantsLetter
         // Long-term memory: "Merk dir …", "Ich heiße …" etc. are kept on the phone for all later chats.
         val learned = de.foldki.app.data.MemoryStore.factsIn(prompt).filter { memory.add(it) }
