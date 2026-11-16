@@ -45,13 +45,15 @@ object LetterLayout {
             if (DATE.containsMatchIn(l)) placeDate = l.trim()
         }
         val head = paras.subList(0, dateIdx)
-        val sender = if (head.size >= 2) head[0] else ""
-        val recipient = if (head.size >= 2) head[1] else head.firstOrNull().orEmpty()
         var bodyParas = paras.subList(s + 1, paras.size)
         var signer = ""
         if (bodyParas.size >= 2 && bodyParas.last().lines().size == 1 && CLOSING.containsMatchIn(bodyParas[bodyParas.size - 2].lines().last())) {
             signer = bodyParas.last(); bodyParas = bodyParas.dropLast(1)
         }
+        // Only one block above the date: it is the own address if it starts with the signer's name, else the recipient.
+        val onlyOwn = head.size == 1 && signer.isNotBlank() && head[0].lines().first().trim().equals(signer.trim(), true)
+        val sender = if (head.size >= 2) head[0] else if (onlyOwn) head[0] else ""
+        val recipient = if (head.size >= 2) head[1] else if (onlyOwn) "" else head.firstOrNull().orEmpty()
         return Letter(
             sender = sender, recipient = recipient, placeDate = placeDate,
             subject = paras[s].replace(Regex("^Betreff\\s*:?\\s*", RegexOption.IGNORE_CASE), "").trim(),

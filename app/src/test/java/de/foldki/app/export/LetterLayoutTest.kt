@@ -59,3 +59,21 @@ class LetterRepairTest {
         assertTrue(out, out.contains("Sehr geehrter Herr Y,\n\nich schreibe."))
     }
 }
+
+class LetterReviewTest {
+    @Test fun bigAmountIsNoDate() {
+        val out = LetterAnalysis.repairNumbers("Es geht um 1.234.567 Euro.", null, listOf("01.12.2026"), null)
+        assertEquals("Es geht um 1.234.567 Euro.", out)
+    }
+
+    @Test fun ownAddressAloneIsNoRecipient() {
+        val text = LetterAnalysis.assemble(
+            "Betreff: X\n\nSehr geehrte Damen und Herren,\n\nText.\n\nMit freundlichen Grüßen",
+            sender = "Paula Fischer\nLindenallee 18\n14612 Falkensee", recipient = null,
+            placeDate = "Falkensee, 16.11.2026", name = "Paula Fischer",
+        )
+        val l = LetterLayout.parse(text)!!
+        assertTrue(l.sender.startsWith("Paula Fischer"))
+        assertEquals("", l.recipient)
+    }
+}

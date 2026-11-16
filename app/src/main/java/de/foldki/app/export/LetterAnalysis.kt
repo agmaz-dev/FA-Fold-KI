@@ -244,7 +244,7 @@ object LetterAnalysis {
         // dates: tokens like 16.1112626 / 12.08.202026 / 12.8.20.26 that are no valid date -> known date with the same day
         val known = dates.filter { VALID_DATE.matches(it) }
         if (known.isNotEmpty()) {
-            out = Regex("(?<![\\d.])(\\d{1,2})\\.(\\d[\\d.]{2,}\\d)(?![\\d])").replace(out) { m ->
+            out = Regex("(?<![\\d.])(\\d{1,2})\\.(\\d[\\d.]{2,}\\d)(?![\\d,])(?!\\s*(Euro|EUR|€|%))").replace(out) { m ->
                 if (VALID_DATE.matches(m.value)) return@replace m.value
                 val day = m.groupValues[1].toInt()
                 val rest = m.groupValues[2].filter { it.isDigit() }
