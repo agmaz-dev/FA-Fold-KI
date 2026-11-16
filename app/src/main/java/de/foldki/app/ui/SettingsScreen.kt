@@ -136,7 +136,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                             }
                         }
                     }
-                    Card("github", Icons.Default.Code, "GitHub (über Claude)", if (ghToken.isBlank()) "Nicht verbunden" else "Verbunden · Änderungen nur mit Freigabe") {
+                    Card("github", Icons.Default.Code, "GitHub", if (ghToken.isBlank()) "Nicht verbunden" else "Verbunden · Änderungen nur mit Freigabe") {
                         OutlinedTextField(
                             value = ghToken, onValueChange = { ghToken = it },
                             label = { Text("GitHub-Token") },
@@ -146,7 +146,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Hint(
-                            "Mit Token kann Claude auf GitHub suchen, Code lesen, Bausteine übernehmen, Repositorys anlegen, " +
+                            "Mit Token kann Fold KI auf GitHub suchen, Code lesen, Bausteine übernehmen, Repositorys anlegen, " +
                                 "Dateien committen, Pull Requests erstellen und APKs mit GitHub Actions bauen. " +
                                 "Jede Änderung zeigt die App dir vorher – erst nach „Freigeben“ passiert sie.",
                         )
@@ -155,7 +155,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                                 "Rechte: Contents, Pull requests, Issues, Actions und Workflows (Lesen und Schreiben), " +
                                 "Administration (zum Anlegen von Repositorys). Wird nur auf diesem Gerät gespeichert.",
                         )
-                        if (key.isBlank()) Hint("Dafür braucht es auch den Claude-API-Schlüssel (Karte „Claude“).")
+                        if (key.isBlank()) Hint("Fold KI nutzt dafür das Online-Modell – dazu den API-Schlüssel in der Karte „Claude (online)“ eintragen.")
                     }
                     Card("gemma", Icons.Default.Memory, "Optionale On-Device-Modelle", gemmaSummary(ui)) { GemmaSettings(vm, ui) }
                     Card("brief", Icons.Default.WbSunny, "Tagesstart (offline)", briefSummary(vm)) { BriefSettings(vm) }

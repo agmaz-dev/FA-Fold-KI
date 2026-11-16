@@ -394,7 +394,7 @@ private fun ChatScreen(
             title = { Text("Freigabe: ${a.title}") },
             text = {
                 androidx.compose.foundation.layout.Column {
-                    Text("Claude möchte auf GitHub Folgendes tun:", fontSize = 13.sp)
+                    Text("Fold KI möchte auf GitHub Folgendes tun:", fontSize = 13.sp)
                     androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
                     Text(
                         a.details, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,

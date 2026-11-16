@@ -624,7 +624,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 logHistory = history.size
                 if (isGitHubTask(prompt, history)) {
                     // GitHub needs Claude (online) – Nano/Gemma cannot do this reliably.
-                    if (engine != Engine.CLAUDE) _ui.update { it.copy(notice = "GitHub-Aufgabe: Claude (online) übernimmt") }
+                    if (engine != Engine.CLAUDE) _ui.update { it.copy(notice = "GitHub-Aufgabe: Fold KI arbeitet online") }
                     editMessage(conv.id, botMsg.id) { it.copy(engine = Engine.CLAUDE) }
                     logSystem = system
                     logHistory = history.size
