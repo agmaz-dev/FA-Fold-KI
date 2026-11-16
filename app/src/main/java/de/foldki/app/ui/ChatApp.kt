@@ -105,6 +105,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -458,7 +459,11 @@ private fun ChatScreen(
                 }
             }
         }
-        InputBar(ui, vm, voice, withMic, onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } })
+        InputBar(
+            ui, vm, voice, withMic,
+            onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } },
+            onDictate = { voice.stopSpeaking(); speakingId = null },
+        )
     }
 }
 
@@ -633,21 +638,30 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
 @Composable
 private fun InputBar(
     ui: UiState, vm: ChatViewModel, voice: VoiceController,
-    withMic: (() -> Unit) -> Unit, onVoiceMode: () -> Unit,
+    withMic: (() -> Unit) -> Unit, onVoiceMode: () -> Unit, onDictate: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
     var dictating by remember { mutableStateOf(false) }
+    val listenPhase by voice.listenPhase.collectAsState()
+    val recognizing = dictating && listenPhase == VoiceController.ListenPhase.TRANSCRIBING
     val dictate = {
-        if (dictating) { voice.stopListening() } else withMic {
-            val before = text
-            dictating = true
-            voice.listen(
-                onFinal = { t -> text = (before + " " + t).trim(); dictating = false },
-                onError = { msg -> dictating = false; vm.notify(msg) },
-            )
+        when {
+            recognizing -> voice.cancelListening() // stop also while recognizing: nothing is inserted
+            dictating -> voice.stopListening()     // end recording now, the text follows
+            else -> withMic {
+                val before = text
+                onDictate()
+                dictating = true
+                voice.listen(
+                    onFinal = { t -> if (t.isNotBlank()) text = (before + " " + t).trim() },
+                    onError = { msg -> vm.notify(msg) },
+                    onEnd = { dictating = false }, // always, also after cancel → never stuck
+                )
+            }
         }
     }
+    DisposableEffect(Unit) { onDispose { if (dictating) voice.cancelListening() } }
     var plusOpen by remember { mutableStateOf(false) }
     // Path survives if Android recreates the activity while the camera app is open.
     var cameraPath by rememberSaveable { mutableStateOf<String?>(null) }
@@ -720,7 +734,7 @@ private fun InputBar(
                 // Text field over the full width (also on the narrow cover screen), buttons below it.
                 TextField(
                     value = text, onValueChange = { text = it },
-                    placeholder = { Text(when { dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
+                    placeholder = { Text(when { recognizing -> "Erkenne…"; dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
                     minLines = 1, maxLines = 5,
                     // Full width on top; at most ~5 lines, then it scrolls inside instead of pushing the chat up.
                     modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
@@ -772,8 +786,10 @@ private fun InputBar(
                     Spacer(Modifier.weight(1f))
                     if (!ui.generating) {
                         IconButton(onClick = dictate) {
-                            Icon(
-                                if (dictating) Icons.Default.MicOff else Icons.Default.Mic, "Diktieren",
+                            if (recognizing) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                            else Icon(
+                                if (dictating) Icons.Default.MicOff else Icons.Default.Mic,
+                                if (dictating) "Diktat beenden" else "Diktieren",
                                 tint = if (dictating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }

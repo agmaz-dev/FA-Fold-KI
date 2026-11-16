@@ -128,10 +128,17 @@ class WhisperStt(context: Context) {
         var silentMs = 0; var waitedMs = 0
         try {
             rec.startRecording()
+            var failedReads = 0
             while (n + frame <= N_SAMPLES) {
                 coroutineContext.ensureActive()
+                if (stopNow()) break // also during the first 300 ms
                 val r = rec.read(buf, 0, frame)
-                if (r <= 0) continue
+                if (r <= 0) {
+                    // Microphone taken by another app or broken: give up instead of hanging.
+                    if (++failedReads > 20) throw IllegalStateException("Mikrofon liefert keine Daten.")
+                    continue
+                }
+                failedReads = 0
                 var sum = 0.0
                 for (i in 0 until r) { val v = buf[i] / 32768f; out[n + i] = v; sum += v * v }
                 n += r
@@ -141,7 +148,6 @@ class WhisperStt(context: Context) {
                 val threshold = max(min(floor, 0.02) * 2.5, 0.01)
                 level(((rms / (threshold * 4)).toFloat()).coerceIn(0f, 1f))
                 if (rms > threshold) { speech = true; silentMs = 0 } else if (speech) silentMs += 30 else waitedMs += 30
-                if (stopNow()) break
                 if (speech && silentMs >= 1200) break
                 if (!speech && waitedMs >= 8000) break
             }

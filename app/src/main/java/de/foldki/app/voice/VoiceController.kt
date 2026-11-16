@@ -5,9 +5,13 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -30,46 +34,85 @@ class VoiceController(context: Context) {
     /** Both models downloaded (one-time setup). */
     val isReady: Boolean get() = supertonic.isReady && whisper.isReady
 
+    /** What the microphone side is doing right now (drives buttons, so nothing can hang). */
+    enum class ListenPhase { IDLE, RECORDING, TRANSCRIBING }
+
+    private val _listenPhase = MutableStateFlow(ListenPhase.IDLE)
+    val listenPhase: StateFlow<ListenPhase> = _listenPhase.asStateFlow()
+
     private var listenJob: Job? = null
+    /** Every listen() gets a new number; callbacks of an older (stopped) session are dropped. */
+    private var session = 0L
     @Volatile private var stopRequested = false
     private var focus: AudioFocusRequest? = null
 
     /**
      * Records until the user pauses, then recognizes the words with Whisper.
      * No intermediate text is shown anywhere: [onTranscribing] only signals that recognition runs,
-     * [onFinal] gets the text (empty = nothing understood).
+     * [onFinal] gets the text (empty = nothing understood). [onEnd] runs exactly once at the end
+     * of the session, also after a stop or cancel, so callers can always reset their state.
+     * Starting again while a session runs ends the old one first (no double start, the
+     * microphone of the old session is released before the new recording begins).
      */
     fun listen(
         onFinal: (String) -> Unit, onError: (String) -> Unit,
-        onLevel: (Float) -> Unit = {}, onTranscribing: () -> Unit = {},
+        onLevel: (Float) -> Unit = {}, onTranscribing: () -> Unit = {}, onEnd: () -> Unit = {},
     ) {
         stopSpeaking()
-        cancelListening()
-        if (!whisper.isReady) { onError("Bitte zuerst die Sprachfunktion einrichten (Einstellungen)."); return }
+        val previous = listenJob
+        previous?.cancel()
+        val id = ++session
+        if (!whisper.isReady) {
+            _listenPhase.value = ListenPhase.IDLE
+            onError("Bitte zuerst die Sprachfunktion einrichten (Einstellungen)."); onEnd(); return
+        }
         stopRequested = false
+        _listenPhase.value = ListenPhase.RECORDING
         scope.launch { whisper.warmUp() } // load Whisper in parallel to the recording (only the first time takes long)
-        listenJob = scope.launch {
-            requestFocus()
+        // UNDISPATCHED: the try/finally is entered at once, so onEnd runs even if stopped right away.
+        listenJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
-                val pcm = whisper.record(level = { l -> scope.launch { onLevel(l) } }, stopNow = { stopRequested })
+                previous?.join()
+                requestFocus()
+                val pcm = whisper.record(
+                    level = { l -> scope.launch { if (id == session) onLevel(l) } },
+                    stopNow = { stopRequested || id != session },
+                )
                 abandonFocus()
+                if (id != session) return@launch
                 if (pcm.isEmpty()) { onFinal(""); return@launch }
+                _listenPhase.value = ListenPhase.TRANSCRIBING
                 onTranscribing()
-                onFinal(whisper.transcribe(pcm))
+                val text = whisper.transcribe(pcm)
+                if (id == session) onFinal(text)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                onError("Spracheingabe fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}")
+                if (id == session) onError("Spracheingabe fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}")
             } finally {
                 abandonFocus()
+                if (id == session) _listenPhase.value = ListenPhase.IDLE
+                onEnd()
             }
         }
     }
 
-    /** Ends the recording now (the recorded part is still transcribed). */
-    fun stopListening() { stopRequested = true }
+    /** Ends the recording now; the recorded part is still recognized (like "fertig"). */
+    fun stopListening() {
+        if (_listenPhase.value == ListenPhase.RECORDING) stopRequested = true
+    }
 
-    fun cancelListening() { listenJob?.cancel(); listenJob = null; abandonFocus() }
+    /** Stops everything at once: recording or recognition, nothing is delivered. */
+    fun cancelListening() {
+        session++
+        stopRequested = true
+        listenJob?.cancel(); listenJob = null
+        _listenPhase.value = ListenPhase.IDLE
+        abandonFocus()
+    }
+
+    /** Stop for the round button: ends recording, recognition and speech output immediately. */
+    fun stopAll() { cancelListening(); stopSpeaking() }
 
     /** Reads [text] aloud with Tessa or Caleb; [onDone] runs afterwards. */
     fun speak(text: String, onDone: () -> Unit = {}) {
@@ -91,7 +134,7 @@ class VoiceController(context: Context) {
 
     fun stopSpeaking() = supertonic.stop()
 
-    fun release() { cancelListening(); supertonic.stop() }
+    fun release() { stopAll() }
 
     /** Pauses music (e.g. Spotify) while listening, like other assistant apps do. */
     private fun requestFocus() {
