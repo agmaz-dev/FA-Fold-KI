@@ -643,7 +643,6 @@ private fun InputBar(
             val before = text
             dictating = true
             voice.listen(
-                onPartial = { text = (before + " " + it).trim() },
                 onFinal = { t -> text = (before + " " + t).trim(); dictating = false },
                 onError = { msg -> dictating = false; vm.notify(msg) },
             )

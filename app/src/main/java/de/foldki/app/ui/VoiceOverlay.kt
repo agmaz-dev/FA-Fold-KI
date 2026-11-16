@@ -62,22 +62,21 @@ private enum class Phase { LISTENING, THINKING, SPEAKING, PAUSED }
 @Composable
 fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose: () -> Unit) {
     var phase by remember { mutableStateOf(Phase.PAUSED) }
-    var heard by remember { mutableStateOf("") }
     var info by remember { mutableStateOf("") }
     var level by remember { mutableFloatStateOf(0f) }
 
     fun startListening() {
-        heard = ""; info = ""; phase = Phase.LISTENING
+        info = ""; phase = Phase.LISTENING
         val handleFinal: (String) -> Unit = { t ->
             level = 0f
             if (t.isBlank()) { phase = Phase.PAUSED; info = "Nichts verstanden – tippe zum Sprechen." }
-            else { heard = t; phase = Phase.THINKING; vm.send(t, voice = true) }
+            else { phase = Phase.THINKING; vm.send(t, voice = true) }
         }
         voice.listen(
-            onPartial = { info = ""; heard = it; phase = Phase.THINKING },
             onFinal = handleFinal,
             onError = { msg -> level = 0f; phase = Phase.PAUSED; info = msg },
             onLevel = { level = it },
+            onTranscribing = { info = ""; phase = Phase.THINKING },
         )
     }
 
@@ -96,8 +95,6 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
             }
         }
     }
-
-    val answer = ui.current?.messages?.lastOrNull()?.takeIf { it.role == Role.ASSISTANT && phase != Phase.LISTENING }?.text.orEmpty()
 
     val pulse = rememberInfiniteTransition(label = "pulse")
     val breathe by pulse.animateFloat(
@@ -143,14 +140,10 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
                 fontSize = 18.sp, fontFamily = FontFamily.Serif,
             )
             Spacer(Modifier.height(12.dp))
-            val shown = when {
-                info.isNotBlank() -> info
-                phase == Phase.LISTENING -> heard
-                answer.isNotBlank() -> DocumentParser.spoken(answer)
-                else -> heard
-            }
+            // No transcript in voice mode: neither the recognized words nor the answer as text
+            // (both stay in the chat). Only hints and errors are shown here.
             Text(
-                shown, textAlign = TextAlign.Center, maxLines = 6, overflow = TextOverflow.Ellipsis,
+                info, textAlign = TextAlign.Center, maxLines = 4, overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.widthIn(max = 560.dp),
             )
             Spacer(Modifier.weight(1f))

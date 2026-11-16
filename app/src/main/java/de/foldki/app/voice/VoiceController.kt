@@ -35,12 +35,13 @@ class VoiceController(context: Context) {
     private var focus: AudioFocusRequest? = null
 
     /**
-     * Records until the user pauses, then transcribes with Whisper.
-     * [onPartial] shows status while working, [onFinal] gets the text (empty = nothing understood).
+     * Records until the user pauses, then recognizes the words with Whisper.
+     * No intermediate text is shown anywhere: [onTranscribing] only signals that recognition runs,
+     * [onFinal] gets the text (empty = nothing understood).
      */
     fun listen(
-        onPartial: (String) -> Unit, onFinal: (String) -> Unit, onError: (String) -> Unit,
-        onLevel: (Float) -> Unit = {},
+        onFinal: (String) -> Unit, onError: (String) -> Unit,
+        onLevel: (Float) -> Unit = {}, onTranscribing: () -> Unit = {},
     ) {
         stopSpeaking()
         cancelListening()
@@ -53,7 +54,7 @@ class VoiceController(context: Context) {
                 val pcm = whisper.record(level = { l -> scope.launch { onLevel(l) } }, stopNow = { stopRequested })
                 abandonFocus()
                 if (pcm.isEmpty()) { onFinal(""); return@launch }
-                onPartial("Erkenne Sprache…")
+                onTranscribing()
                 onFinal(whisper.transcribe(pcm))
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
