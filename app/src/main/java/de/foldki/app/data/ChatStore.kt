@@ -37,6 +37,10 @@ class ChatStore(context: Context) {
                                         id = x.getString("id"), name = x.getString("name"),
                                         mime = x.getString("mime"), path = x.getString("path"),
                                         text = x.optString("text"),
+                                        docDate = x.optString("docDate").ifEmpty { null },
+                                        recipient = x.optString("recipient").ifEmpty { null },
+                                        refNo = x.optString("refNo").ifEmpty { null },
+                                        subject = x.optString("subject").ifEmpty { null },
                                     )
                                 }
                             } ?: emptyList(),
@@ -66,6 +70,8 @@ class ChatStore(context: Context) {
                             put(JSONObject().apply {
                                 put("id", a.id); put("name", a.name); put("mime", a.mime)
                                 put("path", a.path); put("text", a.text)
+                                a.docDate?.let { put("docDate", it) }; a.recipient?.let { put("recipient", it) }
+                                a.refNo?.let { put("refNo", it) }; a.subject?.let { put("subject", it) }
                             })
                         }
                     })

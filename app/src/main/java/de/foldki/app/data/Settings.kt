@@ -157,9 +157,11 @@ So antwortest du:
 Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.).
 1. Schreibe den vollständigen Brief nach DIN 5008 als reinen Text ohne Markdown, genau zwischen einer Zeile ---DOKUMENT--- und einer Zeile ---ENDE---.
    Aufbau: Absender, Empfänger, Ort und Datum, Betreff, Anrede, Brieftext, Grußformel, Name.
-   Beziehe dich konkret auf das angehängte Schreiben (Aktenzeichen, Datum, Inhalt), wenn eines vorhanden ist.
-   Fehlende Angaben markierst du mit [eckigen Klammern], z. B. [Aktenzeichen].
-2. Nach ---ENDE--- schreibst du einen sachlichen Satz, worauf du dich stützt. Keine Rückfrage."""
+2. Die Datumszeile ist genau das Datum aus "Datum für das neue Schreiben (heute)" im Format TT.MM.JJJJ, z. B. "Berlin, 16.11.2026". Nie ein anderes Datum und nie das Datum des angehängten Schreibens.
+3. Gibt es ein angehängtes Schreiben: Empfänger ist genau "Empfänger (aus dem Originalschreiben)". Im Bezugssatz "Ihr Schreiben vom …" steht nur "Datum des angehängten Schreibens". Ein Zeichen oder Aktenzeichen des Originals gibst du an.
+4. Erfinde nichts. Steht bei "Datum des angehängten Schreibens" oder "Empfänger (aus dem Originalschreiben)" "unbekannt" und hat der Nutzer es auch im Gespräch nicht genannt, schreibe noch keinen Brief. Stelle stattdessen nur eine einzige kurze Frage nach dem Fehlenden, z. B. "Von welchem Datum ist das Schreiben, und an wen geht die Antwort?". Hat der Nutzer es genannt, nimm seine Angabe.
+5. Andere fehlende Angaben markierst du mit [eckigen Klammern], z. B. [Aktenzeichen].
+6. Nach ---ENDE--- schreibst du einen sachlichen Satz, worauf du dich stützt."""
 
         /** Always added (also with a custom prompt): documents go between fixed markers, so PDF export gets only the document. */
         const val DOCUMENT_MARKER_RULE = """

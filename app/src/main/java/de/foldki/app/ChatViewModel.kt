@@ -388,7 +388,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun addAttachment(uri: android.net.Uri, deleteAfter: java.io.File? = null) = viewModelScope.launch {
         _ui.update { it.copy(importing = true) }
         try {
-            val a = attachments.import(uri)
+            val a = attachments.import(uri, ownNames())
             _ui.update { it.copy(pending = it.pending + a) }
         } catch (e: Throwable) {
             _ui.update { it.copy(notice = "Datei konnte nicht geladen werden: ${e.message ?: e.javaClass.simpleName}") }
@@ -452,7 +452,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true
         val sentDoc = pendingFiles.isNotEmpty() && !wantsLetter
-        val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null) +
+        val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null, history = history) +
             (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
             (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
         var finished = false
@@ -496,21 +496,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val parts = DocumentParser.parse(msg.text)
         val doc = parts.document ?: return
         if (!parts.complete || !(wantsLetter || parts.isLetter)) return
-        val pdf = runCatching { attachments.createPdf(doc) }.getOrNull() ?: return
+        val pdf = runCatching { attachments.createPdf(pdfText(doc)) }.getOrNull() ?: return
         editMessage(convId, msgId) { it.copy(attachments = it.attachments + pdf) }
     }
 
+    /** The user's own names (never taken as recipient of a reply). */
+    private fun ownNames(): List<String> = listOfNotNull(settings.sender.lines().firstOrNull()?.trim()?.takeIf { it.isNotEmpty() })
+
+    private fun today(): String = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())
+
     /** Letter rules only when the user actually asks for a letter – otherwise the AI talks normally. */
-    private fun buildSystem(letter: Boolean, followUpDoc: Boolean): String = buildString {
+    private fun buildSystem(letter: Boolean, followUpDoc: Boolean, history: List<ChatMessage> = emptyList()): String = buildString {
         append(settings.systemPrompt).append("\n")
         append(Settings.DOCUMENT_MARKER_RULE).append("\n")
         if (followUpDoc) append(Settings.DOCUMENT_FOLLOWUP_RULE).append("\n")
-        append("Heutiges Datum: ").append(java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())).append("\n")
+        append("Heutiges Datum: ").append(today()).append("\n")
         if (letter) {
             append(Settings.LETTER_RULES).append("\n")
+            append("Datum für das neue Schreiben (heute): ").append(today()).append("\n")
+            // Data of the attached original letter, read by the app from its first page.
+            val original = history.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }?.attachments?.lastOrNull()
+            if (original != null) {
+                append("Datum des angehängten Schreibens: ").append(original.docDate ?: "unbekannt").append("\n")
+                append("Empfänger (aus dem Originalschreiben): ").append(original.recipient?.let { "\n$it" } ?: "unbekannt").append("\n")
+                original.refNo?.let { append("Zeichen des Originalschreibens: ").append(it).append("\n") }
+                original.subject?.let { append("Betreff des Originalschreibens: ").append(it).append("\n") }
+            }
             if (settings.sender.isNotBlank()) append("Absender des Nutzers:\n").append(settings.sender).append("\n")
         }
     }
+
+    /** Text that goes into a PDF: letters without a date line get today's date (safety net, no duplicates). */
+    fun pdfText(doc: String): String = DocumentParser.ensureDateLine(doc, today(), place = null)
 
     private fun editMessage(convId: String, msgId: String, f: (ChatMessage) -> ChatMessage) {
         _ui.update { s ->

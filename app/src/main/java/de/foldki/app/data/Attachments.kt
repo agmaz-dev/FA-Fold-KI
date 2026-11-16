@@ -16,6 +16,7 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import de.foldki.app.export.LetterMeta
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -31,7 +32,8 @@ class Attachments(private val context: Context) {
     private val dir = File(context.filesDir, "attachments").apply { mkdirs() }
     private var pdfBoxReady = false
 
-    suspend fun import(uri: Uri): Attachment = withContext(Dispatchers.IO) {
+    /** [ownNames] = the user's own names (sender profiles), so his address is never taken as the recipient. */
+    suspend fun import(uri: Uri, ownNames: List<String> = emptyList()): Attachment = withContext(Dispatchers.IO) {
         val resolver = context.contentResolver
         val mime = resolver.getType(uri) ?: guessMime(uri)
         val name = displayName(uri) ?: if (mime == "application/pdf") "Dokument.pdf" else "Foto.jpg"
@@ -40,16 +42,60 @@ class Attachments(private val context: Context) {
             mime == "application/pdf" -> {
                 val file = File(dir, "$id.pdf")
                 resolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } }
-                Attachment(id = id, name = name, mime = mime, path = file.absolutePath, text = pdfText(file))
+                val text = pdfText(file)
+                withLetterMeta(Attachment(id = id, name = name, mime = mime, path = file.absolutePath, text = text), firstPageMeta(file, text, ownNames))
             }
             mime.startsWith("image/") -> {
                 val file = File(dir, "$id.jpg")
                 val bmp = loadScaled(uri, 1568)
                 file.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 85, it) }
-                Attachment(id = id, name = name, mime = "image/jpeg", path = file.absolutePath, text = ocr(bmp))
+                val text = ocr(bmp)
+                withLetterMeta(Attachment(id = id, name = name, mime = "image/jpeg", path = file.absolutePath, text = text), LetterMeta.extract(text, ownNames))
             }
             else -> throw IllegalArgumentException("Nur Fotos und PDF-Dateien werden unterstützt.")
         }
+    }
+
+    private fun withLetterMeta(a: Attachment, m: LetterMeta.Meta) =
+        a.copy(docDate = m.date, recipient = m.recipient, refNo = m.refNo, subject = m.subject)
+
+    /**
+     * Letter data from page 1 only. If page 1 has no date in its text layer (e.g. the letterhead is an image),
+     * page 1 is always read with OCR as well, even if other pages have text.
+     */
+    private suspend fun firstPageMeta(file: File, allText: String, ownNames: List<String>): LetterMeta.Meta {
+        val page1 = runCatching {
+            if (!pdfBoxReady) { PDFBoxResourceLoader.init(context); pdfBoxReady = true }
+            PDDocument.load(file).use { PDFTextStripper().apply { startPage = 1; endPage = 1 }.getText(it) }
+        }.getOrDefault("").trim().ifBlank { allText.take(4000) }
+        val fromText = LetterMeta.extract(page1, ownNames)
+        if (fromText.date != null && fromText.recipient != null) return fromText
+        val ocr = runCatching { renderPageOcr(file, 0) }.getOrDefault("")
+        if (ocr.isBlank()) return fromText
+        val fromOcr = LetterMeta.extract(ocr, ownNames)
+        return LetterMeta.Meta(
+            date = fromText.date ?: fromOcr.date,
+            recipient = fromText.recipient ?: fromOcr.recipient,
+            refNo = fromText.refNo ?: fromOcr.refNo,
+            subject = fromText.subject ?: fromOcr.subject,
+        )
+    }
+
+    private suspend fun renderPageOcr(file: File, index: Int): String {
+        val bmp = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+            PdfRenderer(fd).use { r ->
+                if (index >= r.pageCount) return ""
+                r.openPage(index).use { page ->
+                    val w = 1400
+                    val h = (w.toFloat() * page.height / page.width).toInt()
+                    Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+                        it.eraseColor(Color.WHITE)
+                        page.render(it, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    }
+                }
+            }
+        }
+        return try { ocr(bmp) } finally { bmp.recycle() }
     }
 
     /** Saves [text] as an A4 PDF in the chat attachments (used for letters the AI wrote). */

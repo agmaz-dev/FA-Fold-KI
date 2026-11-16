@@ -107,4 +107,33 @@ class DocumentParserTest {
     @Test fun displayRemovesMarkers() {
         assertEquals("A\n\nB", DocumentParser.display("A\n---DOKUMENT---\nB\n---ENDE---"))
     }
+
+    // ---- date line safety net ----
+
+    @Test fun dateLineInsertedBeforeBetreff() {
+        val out = DocumentParser.ensureDateLine(letter, "16.11.2026")
+        val lines = out.lines()
+        val i = lines.indexOf("16.11.2026")
+        assertTrue(i > 0)
+        assertTrue(lines[i + 2].startsWith("Betreff"))
+        assertEquals(i, DocumentParser.dateLineIndex(out))
+    }
+
+    @Test fun dateLineNotDuplicated() {
+        val withDate = letter.replace("Betreff:", "Berlin, 15.11.2026\n\nBetreff:")
+        assertEquals(withDate, DocumentParser.ensureDateLine(withDate, "16.11.2026"))
+        val written = letter.replace("Betreff:", "Berlin, den 15. November 2026\n\nBetreff:")
+        assertEquals(written, DocumentParser.ensureDateLine(written, "16.11.2026"))
+    }
+
+    @Test fun bescheidVomInBetreffIsNoDateLine() {
+        // The letter fixture has "Betreff: Widerspruch gegen den Bescheid vom 01.11.2026" and no date line.
+        assertEquals(-1, DocumentParser.dateLineIndex(letter))
+        assertTrue(DocumentParser.ensureDateLine(letter, "16.11.2026", "Berlin").contains("\nBerlin, 16.11.2026\n"))
+    }
+
+    @Test fun noDateLineForNonLetters() {
+        val list = "Einkaufsliste\n• Milch\n• Brot"
+        assertEquals(list, DocumentParser.ensureDateLine(list, "16.11.2026"))
+    }
 }

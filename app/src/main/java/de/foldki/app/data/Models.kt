@@ -14,6 +14,12 @@ data class Attachment(
     val mime: String,
     val path: String,
     val text: String = "",
+    /** Read from the first page of an attached letter (never from PDF metadata or the file name). */
+    val docDate: String? = null,
+    /** Sender of the original letter = recipient of a reply (multi-line). */
+    val recipient: String? = null,
+    val refNo: String? = null,
+    val subject: String? = null,
 ) {
     val isImage get() = mime.startsWith("image/")
     val isPdf get() = mime == "application/pdf"

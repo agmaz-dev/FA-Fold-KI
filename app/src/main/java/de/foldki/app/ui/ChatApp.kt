@@ -366,9 +366,9 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
                 .setPrimaryClip(android.content.ClipData.newPlainText("Text", text))
             vm.notify("Kopiert")
         },
-        savePdf = { text -> pdfText = text; savePdf.launch(pdfName(text)) },
+        savePdf = { text -> pdfText = vm.pdfText(text); savePdf.launch(pdfName(text)) },
         sharePdf = { text ->
-            runCatching { PdfExporter.share(context, text, pdfName(text)) }
+            runCatching { PdfExporter.share(context, vm.pdfText(text), pdfName(text)) }
                 .onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") }
         },
         speak = { id, text ->

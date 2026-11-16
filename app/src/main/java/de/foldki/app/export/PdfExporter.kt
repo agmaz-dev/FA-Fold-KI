@@ -29,7 +29,15 @@ object PdfExporter {
             color = android.graphics.Color.BLACK
         }
         val width = PAGE_W - LEFT - RIGHT
-        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
+        // DIN 5008: the date line of a letter stands on the right.
+        val styled = android.text.SpannableString(text)
+        val dateIdx = DocumentParser.dateLineIndex(text)
+        if (dateIdx >= 0) {
+            val start = text.lines().take(dateIdx).sumOf { it.length + 1 }
+            val end = (start + text.lines()[dateIdx].length).coerceAtMost(text.length)
+            styled.setSpan(android.text.style.AlignmentSpan.Standard(Layout.Alignment.ALIGN_OPPOSITE), start, end, android.text.Spanned.SPAN_INCLUSIVE_EXCLUSIVE)
+        }
+        val layout = StaticLayout.Builder.obtain(styled, 0, styled.length, paint, width)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
             .setLineSpacing(2f, 1.1f)
             .build()
