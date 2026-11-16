@@ -6,6 +6,16 @@ import android.content.Context
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
+    /** Sender profile last used for a recipient (key = LetterAnalysis.recipientKey), like FA-PDF. */
+    fun rememberedProfile(recipientKey: String): String? =
+        runCatching { org.json.JSONObject(prefs.getString("recipient_profiles", "{}") ?: "{}").optString(recipientKey).ifEmpty { null } }.getOrNull()
+
+    fun rememberProfile(recipientKey: String, profileId: String) {
+        val o = runCatching { org.json.JSONObject(prefs.getString("recipient_profiles", "{}") ?: "{}") }.getOrDefault(org.json.JSONObject())
+        o.put(recipientKey, profileId)
+        prefs.edit().putString("recipient_profiles", o.toString()).apply()
+    }
+
     var apiKey: String
         get() = prefs.getString("api_key", "") ?: ""
         set(v) = prefs.edit().putString("api_key", v.trim()).apply()
@@ -188,7 +198,8 @@ Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.).
 2. Die Datumszeile ist genau das Datum aus "Datum für das neue Schreiben (heute)" im Format TT.MM.JJJJ, z. B. "Berlin, 16.11.2026". Nie ein anderes Datum und nie das Datum des angehängten Schreibens.
 3. Gibt es ein angehängtes Schreiben: Empfänger ist genau "Empfänger (aus dem Originalschreiben)". Im Bezugssatz "Ihr Schreiben vom …" steht nur "Datum des angehängten Schreibens". Ein Zeichen oder Aktenzeichen des Originals gibst du an.
 4. Erfinde nichts. Steht bei "Datum des angehängten Schreibens" oder "Empfänger (aus dem Originalschreiben)" "unbekannt" und hat der Nutzer es auch im Gespräch nicht genannt, schreibe noch keinen Brief. Stelle stattdessen nur eine einzige kurze Frage nach dem Fehlenden, z. B. "Von welchem Datum ist das Schreiben, und an wen geht die Antwort?". Hat der Nutzer es genannt, nimm seine Angabe.
-5. Andere fehlende Angaben markierst du mit [eckigen Klammern], z. B. [Aktenzeichen].
+5. Setze alle bekannten Angaben (Datum, Aktenzeichen, Beträge, Fristen) direkt ein. Keine Platzhalter, keine eckigen Klammern – was unbekannt ist, lässt du einfach weg. Keine Hinweise oder Erklärungen an den Nutzer im Brief.
+   Formuliere die Angaben des Nutzers sachlich und vollständig aus (z. B. aus "ich war das nicht" wird "Ich war zum genannten Zeitpunkt nicht der Fahrer des Fahrzeugs.").
 6. Nach ---ENDE--- schreibst du einen sachlichen Satz, worauf du dich stützt."""
 
         /** Added to letters when a sender profile is active. */

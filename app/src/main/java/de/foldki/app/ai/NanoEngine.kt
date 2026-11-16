@@ -103,19 +103,20 @@ Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
         answer.lines().firstOrNull { it.isNotBlank() }?.trim()?.trim('"', '.', '*')?.take(100).orEmpty()
 
     /** Packs system text, attachments, web results and the last turns into one prompt (also used by Gemma). */
-    fun buildPrompt(system: String, history: List<ChatMessage>, web: String = ""): String {
-        val turns = history.filter { !it.isError }.takeLast(6)
+    /** [large] = Gemma 4 E2B (32K context): whole documents and longer history instead of Nano's small limits. */
+    fun buildPrompt(system: String, history: List<ChatMessage>, web: String = "", large: Boolean = false): String {
+        val turns = history.filter { !it.isError }.takeLast(if (large) 12 else 6)
         val lines = turns.map { m ->
             val who = if (m.role == Role.USER) "Nutzer" else "Assistent"
-            "$who: ${m.text.take(1500)}"
+            "$who: ${m.text.take(if (large) 6000 else 1500)}"
         }.toMutableList()
-        // Keep the prompt within Nano's small context: drop the oldest turns first.
-        while (lines.size > 1 && lines.sumOf { it.length } > 3000) lines.removeAt(0)
+        // Keep the prompt within the model's context: drop the oldest turns first.
+        while (lines.size > 1 && lines.sumOf { it.length } > (if (large) 14000 else 3000)) lines.removeAt(0)
 
         // Text of attached documents/photos (latest ones first), limited to fit Nano.
         val docs = StringBuilder()
         // With web results in the prompt, documents get less room so Nano's small input limit is not exceeded.
-        var budget = if (web.isNotBlank()) 2500 else 4500
+        var budget = if (large) (if (web.isNotBlank()) 16000 else 24000) else if (web.isNotBlank()) 2500 else 4500
         history.asReversed().flatMap { it.attachments }.forEach { a ->
             if (budget <= 0 || a.text.isBlank()) return@forEach
             val t = a.text.take(budget)
@@ -128,7 +129,7 @@ Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
             append(system).append("\n\n")
             if (docs.isNotEmpty()) append("Inhalt der angehängten Dateien:\n").append(docs)
             if (web.isNotBlank()) append("Ergebnisse einer Internetsuche (nutze sie für deine Antwort und nenne die Quelle, z. B. Wikipedia):\n")
-                .append(web.take(3000)).append("\n\n")
+                .append(web.take(if (large) 6000 else 3000)).append("\n\n")
             if (noText.isNotEmpty()) append("(Aus ${noText.joinToString { it.name }} konnte kein Text gelesen werden.)\n\n")
             lines.forEach { append(it).append("\n") }
             append("Assistent:")

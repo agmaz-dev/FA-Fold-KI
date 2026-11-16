@@ -83,7 +83,7 @@ class GemmaEngine(context: Context) {
             val terms = NanoEngine.firstLineTerms(complete(e, NanoEngine.searchTermsPrompt(question)))
             web = WebLookup.search(terms.ifBlank { question.take(100) })
         }
-        val prompt = NanoEngine.buildPrompt(system, history, web)
+        val prompt = NanoEngine.buildPrompt(system, history, web, large = true)
         stream(e, prompt).collect { emit(it) }
     }
 

@@ -680,6 +680,31 @@ private fun InputBar(
     }
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Answer suggestions from the AI's reading of the last letter (like FA-PDF)
+        val lastLetter = ui.current?.messages?.lastOrNull { m -> m.role == Role.USER && m.attachments.any { it.analysis != null } }
+            ?.attachments?.lastOrNull { it.analysis != null }
+        val suggestions = lastLetter?.analysis?.takeIf { it != "-" }
+            ?.let { de.foldki.app.export.LetterAnalysis.parse(it).suggestions }
+            ?.ifEmpty { de.foldki.app.export.LetterAnalysis.DEFAULT_SUGGESTIONS }
+            .orEmpty()
+        if (suggestions.isNotEmpty() && ui.pending.isEmpty() && !ui.generating) {
+            Row(
+                Modifier.widthIn(max = 760.dp).fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                suggestions.forEach { sug ->
+                    AssistChip(
+                        onClick = {
+                            vm.send("Schreib ein Antwortschreiben auf das Schreiben: $sug" + if (text.isNotBlank()) "\nZusätzliche Hinweise: $text" else "")
+                            text = ""
+                        },
+                        label = { Text(sug, maxLines = 1) },
+                        leadingIcon = { Icon(Icons.Default.Description, null, modifier = Modifier.size(16.dp)) },
+                    )
+                }
+            }
+        }
+
         // Quick actions (reply letter, objection, …)
         val showQuick = ui.pending.isNotEmpty() || ui.current == null
         if (showQuick && !ui.generating) {

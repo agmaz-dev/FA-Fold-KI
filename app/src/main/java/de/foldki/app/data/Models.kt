@@ -20,6 +20,8 @@ data class Attachment(
     val recipient: String? = null,
     val refNo: String? = null,
     val subject: String? = null,
+    /** FA-PDF style reading of the letter by the AI (KURZ:/BRIEFDATUM:/ABSENDER:/VORSCHLAG: … lines), once per file. */
+    val analysis: String? = null,
 ) {
     val isImage get() = mime.startsWith("image/")
     val isPdf get() = mime == "application/pdf"

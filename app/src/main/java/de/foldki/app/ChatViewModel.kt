@@ -205,7 +205,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
      * Tries Gemma. Returns false if it fails or times out BEFORE the first word (the caller then asks Nano).
      * Errors after the first word are thrown like with any other engine.
      */
-    private suspend fun replyWithGemma(convId: String, msgId: String, system: String, history: List<ChatMessage>, web: Boolean): Boolean {
+    private suspend fun replyWithGemma(convId: String, msgId: String, system: String, history: List<ChatMessage>, web: Boolean): Boolean =
+        runGemma(
+            system, history, web,
+            onStart = { editMessage(convId, msgId) { it.copy(engine = Engine.GEMMA) } },
+            onFail = { editMessage(convId, msgId) { it.copy(engine = Engine.NANO) } },
+        ) { t -> editMessage(convId, msgId) { it.copy(text = it.text + t) } }
+
+    /** Runs Gemma (loading it if needed); false = not available / no first token in time -> caller uses Nano. */
+    private suspend fun runGemma(
+        system: String, history: List<ChatMessage>, web: Boolean,
+        onStart: () -> Unit = {}, onFail: () -> Unit = {}, onText: (String) -> Unit,
+    ): Boolean {
         if (tooHot()) return false
         idleJob?.cancel()
         gemmaBegin()
@@ -219,7 +230,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 if (backend == "CPU" && settings.gemmaBackend == "GPU") settings.gemmaBackend = "CPU"
             }
             settings.gemmaAttempt = gemma.backendUsed ?: settings.gemmaBackend
-            editMessage(convId, msgId) { it.copy(engine = Engine.GEMMA) }
+            onStart()
             return coroutineScope {
                 val ch = produce(capacity = Channel.UNLIMITED) {
                     try { gemma.reply(system, history, web).collect { send(it) } }
@@ -230,11 +241,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val firstText = first?.getOrNull()
                 if (firstText == null) {
                     ch.cancel()
-                    editMessage(convId, msgId) { it.copy(engine = Engine.NANO) }
+                    onFail()
                     return@coroutineScope false
                 }
-                editMessage(convId, msgId) { it.copy(text = it.text + firstText) }
-                for (t in ch) editMessage(convId, msgId) { it.copy(text = it.text + t) }
+                onText(firstText)
+                for (t in ch) onText(t)
                 true
             }
         } finally {
@@ -515,12 +526,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true
         val sentDoc = pendingFiles.isNotEmpty() && !wantsLetter
-        val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null, history = history) +
-            (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
-            (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
         var finished = false
         job = viewModelScope.launch {
             try {
+                // Like FA-PDF: the AI reads a new letter once (date, sender, case number, deadline, suggestions).
+                analyzeDocs(conv.id, history.flatMap { it.attachments }, engine)
+                val history = _ui.value.conversations.firstOrNull { it.id == conv.id }?.messages?.dropLast(1) ?: history
+                val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null, history = history) +
+                    (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
+                    (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
                 val useGemma = engine == Engine.NANO && _ui.value.gemmaActive
                 val byGemma = useGemma && replyWithGemma(conv.id, botMsg.id, system, history, web)
                 if (!byGemma) {
@@ -557,13 +571,71 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val msg = _ui.value.conversations.firstOrNull { it.id == convId }?.messages?.firstOrNull { it.id == msgId } ?: return
         if (msg.isError) return
         val parts = DocumentParser.parse(msg.text)
-        val doc = parts.document ?: return
+        val rawDoc = parts.document ?: return
         if (!parts.complete || !(wantsLetter || parts.isLetter)) return
+        // FA-PDF: fill leftover placeholders from the letter's data, end a cut-off text cleanly.
+        val original = _ui.value.conversations.firstOrNull { it.id == convId }?.messages
+            ?.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }?.attachments?.lastOrNull()
+        val facts = original?.analysis?.let { de.foldki.app.export.LetterAnalysis.parse(it) }
+        val doc = de.foldki.app.export.LetterAnalysis.completeEnding(
+            de.foldki.app.export.LetterAnalysis.fixPlaceholders(rawDoc, original?.docDate, original?.refNo ?: facts?.reference, facts?.amount, facts?.deadline, facts?.contact),
+        )
+        if (doc != rawDoc) editMessage(convId, msgId) { it.copy(text = it.text.replace(rawDoc, doc)) }
+        de.foldki.app.export.LetterAnalysis.recipientKey(original?.recipient)?.let { key ->
+            settings.activeSender?.id?.let { settings.rememberProfile(key, it) }
+        }
         val pdf = runCatching { attachments.createPdf(pdfText(doc), activeSignature()) }.getOrNull() ?: return
         editMessage(convId, msgId) { it.copy(attachments = it.attachments + pdf) }
         // A finished letter opens in the preview right away (check, save, share or change the text).
         if (openPreview && (parts.isLetter || wantsLetter)) openPreview(doc)
     }
+
+    /**
+     * FA-PDF style reading: every not yet read letter/photo is read once by the AI (Claude if chosen, else Gemma if on,
+     * else Nano). The result fills gaps of the rule-based LetterMeta and is stored on the attachment.
+     */
+    private suspend fun analyzeDocs(convId: String, files: List<Attachment>, engine: Engine) {
+        val todo = files.filter { it.analysis == null && (it.text.isNotBlank() || (engine == Engine.CLAUDE && (it.isPdf || it.isImage))) }
+        for (a in todo) {
+            _ui.update { it.copy(notice = "Lese das Schreiben …") }
+            val raw = withTimeoutOrNull(120_000) { analyzeOne(a, engine) }.orEmpty()
+            val r = de.foldki.app.export.LetterAnalysis.parse(raw)
+            val updated = a.copy(
+                analysis = raw.ifBlank { "-" }, // "-" = tried, do not read again
+                docDate = a.docDate ?: r.date.ifBlank { null },
+                recipient = a.recipient ?: r.sender.ifBlank { null },
+                refNo = a.refNo ?: r.reference.ifBlank { null },
+            )
+            _ui.update { st -> st.copy(conversations = st.conversations.map { c ->
+                if (c.id != convId) c else c.copy(messages = c.messages.map { m ->
+                    m.copy(attachments = m.attachments.map { x -> if (x.id == a.id) updated else x })
+                })
+            }) }
+            // Same recipient as before -> the sender profile used last time (FA-PDF).
+            de.foldki.app.export.LetterAnalysis.recipientKey(updated.recipient)?.let { key ->
+                val pid = settings.rememberedProfile(key)
+                val p = settings.senderProfiles.firstOrNull { it.id == pid }
+                if (p != null && p.id != settings.activeSender?.id) {
+                    setActiveProfile(p.id)
+                    _ui.update { it.copy(notice = "Absender: ${p.label.ifBlank { p.name }} (wie beim letzten Mal)") }
+                }
+            }
+        }
+        if (todo.isNotEmpty()) persist()
+    }
+
+    private suspend fun analyzeOne(a: Attachment, engine: Engine): String = runCatching {
+        val ask = listOf(ChatMessage(role = Role.USER, text = "Lies das angehängte Schreiben und antworte im verlangten Zeilenformat.", attachments = listOf(a)))
+        val sys = de.foldki.app.export.LetterAnalysis.ANALYZE
+        val sb = StringBuilder()
+        when {
+            engine == Engine.CLAUDE && settings.apiKey.isNotBlank() ->
+                claude.reply(settings.apiKey, settings.claudeModel, sys, ask, false).collect { sb.append(it) }
+            engine != Engine.CLAUDE && _ui.value.gemmaActive && runGemma(sys, ask, false) { sb.append(it) } -> Unit
+            else -> { sb.clear(); nano.reply(sys, ask, false).collect { sb.append(it) } }
+        }
+        sb.toString()
+    }.getOrDefault("")
 
     /** The user's own names (never taken as recipient of a reply). */
     private fun ownNames(): List<String> = settings.senderProfiles.map { it.name.trim() }.filter { it.isNotEmpty() }
@@ -586,6 +658,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 append("Empfänger (aus dem Originalschreiben): ").append(original.recipient?.let { "\n$it" } ?: "unbekannt").append("\n")
                 original.refNo?.let { append("Zeichen des Originalschreibens: ").append(it).append("\n") }
                 original.subject?.let { append("Betreff des Originalschreibens: ").append(it).append("\n") }
+                original.analysis?.let { de.foldki.app.export.LetterAnalysis.parse(it) }?.let { r ->
+                    if (r.deadline.isNotBlank()) append("Frist im Originalschreiben: ").append(r.deadline).append("\n")
+                    if (r.amount.isNotBlank()) append("Betrag im Originalschreiben: ").append(r.amount).append("\n")
+                    if (r.contact.isNotBlank()) append("Ansprechpartner: ").append(r.contact).append("\n")
+                    if (r.note.isNotBlank()) append("Handschriftliche Notiz des Nutzers auf dem Schreiben: ").append(r.note).append("\n")
+                }
             }
             settings.activeSender?.takeIf { it.toLegacyText().isNotBlank() }?.let {
                 append(de.foldki.app.data.SenderProfile.promptBlock(it)).append("\n")

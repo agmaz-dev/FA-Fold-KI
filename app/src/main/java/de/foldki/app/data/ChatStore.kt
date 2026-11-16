@@ -41,6 +41,7 @@ class ChatStore(context: Context) {
                                         recipient = x.optString("recipient").ifEmpty { null },
                                         refNo = x.optString("refNo").ifEmpty { null },
                                         subject = x.optString("subject").ifEmpty { null },
+                                        analysis = x.optString("analysis").ifEmpty { null },
                                     )
                                 }
                             } ?: emptyList(),
@@ -72,6 +73,7 @@ class ChatStore(context: Context) {
                                 put("path", a.path); put("text", a.text)
                                 a.docDate?.let { put("docDate", it) }; a.recipient?.let { put("recipient", it) }
                                 a.refNo?.let { put("refNo", it) }; a.subject?.let { put("subject", it) }
+                                a.analysis?.let { put("analysis", it) }
                             })
                         }
                     })
