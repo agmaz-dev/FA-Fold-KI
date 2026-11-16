@@ -17,7 +17,7 @@ import java.net.URLEncoder
  * Both are free and need no API key. The results are put into Nano's prompt.
  */
 object WebLookup {
-    private const val UA = "FoldKI/1.2 (Android chat app)"
+    private const val UA = "FoldKI (Android chat app)" // no version number that goes stale
 
     suspend fun search(query: String): String = coroutineScope {
         val wiki = async { runCatching { wikipedia(query) }.getOrDefault("") }

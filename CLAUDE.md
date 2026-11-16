@@ -10,5 +10,8 @@
 - Wie bei ChatGPT/Grok: **eigene Mikrofonaufnahme + Whisper auf dem Gerät**, keine System-Spracherkennung (kein Android-SpeechRecognizer, kein Google-Sprachfenster).
 - Android: `Xenova/whisper-small` (int8, ONNX Runtime) → `app/src/main/java/de/foldki/app/voice/WhisperStt.kt` in FA-KI-FOLD7. Desktop: whisper.cpp (`lib/speech.js` in FA-KI-Desktop).
 
+## Zielgerät
+- Zielgerät: Samsung Galaxy Z Fold 7. Jede Layout-Änderung und jeder Test gilt für beide Zustände: zugeklappt (schmales Außendisplay) und aufgeklappt (großes Display). Eingabefelder, Knöpfe und Abstände müssen auf dem Außendisplay funktionieren.
+
 ## Allgemein
 - Antworten und App-Texte auf Deutsch.

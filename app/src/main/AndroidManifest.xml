@@ -6,18 +6,6 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
-    <!-- Android 11+: make speech recognition and text-to-speech services visible to the app -->
-    <queries>
-        <intent>
-            <action android:name="android.speech.RecognitionService" />
-        </intent>
-        <intent>
-            <action android:name="android.intent.action.TTS_SERVICE" />
-        </intent>
-        <intent>
-            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
-        </intent>
-    </queries>
 
     <application
         android:allowBackup="false"

@@ -78,11 +78,6 @@ object PdfExporter {
         context.startActivity(Intent.createChooser(send, "PDF teilen").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    /** Removes simple Markdown so letters look clean in the chat and in the PDF. */
-    fun clean(text: String): String = text.lines().joinToString("\n") { l ->
-        var s = l.replace("**", "").replace("__", "")
-        s = s.replace(Regex("^#{1,6}\\s+"), "")
-        s = s.replace(Regex("^(\\s*)[*-]\\s+"), "$1• ")
-        s
-    }
+    /** Removes simple Markdown so documents look clean in the chat and in the PDF. */
+    fun clean(text: String): String = DocumentParser.clean(text)
 }

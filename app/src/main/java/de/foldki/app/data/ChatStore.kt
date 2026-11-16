@@ -45,6 +45,9 @@ class ChatStore(context: Context) {
             }.sortedByDescending { it.updatedAt }
         }
     } catch (e: Exception) {
+        // Unreadable file: keep a copy instead of overwriting it with an empty list on the next save.
+        runCatching { file.copyTo(File(file.parentFile, "chats.corrupt-${System.currentTimeMillis()}.json"), overwrite = false) }
+        android.util.Log.e("FoldKI", "chats.json konnte nicht gelesen werden, Sicherung angelegt", e)
         emptyList()
     }
 
@@ -74,6 +77,6 @@ class ChatStore(context: Context) {
         }
         val tmp = File(file.parentFile, "chats.json.tmp")
         tmp.writeText(arr.toString())
-        tmp.renameTo(file)
+        if (!tmp.renameTo(file)) { tmp.copyTo(file, overwrite = true); tmp.delete() }
     }
 }

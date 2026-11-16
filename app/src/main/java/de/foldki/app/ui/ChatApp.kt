@@ -38,7 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.FileProvider
 import de.foldki.app.data.Attachment
 import de.foldki.app.export.PdfExporter
-import de.foldki.app.export.LetterParser
+import de.foldki.app.export.DocumentParser
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,6 +52,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -390,7 +391,9 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
 }
 
 private fun pdfName(text: String): String {
-    val first = PdfExporter.clean(text).lines().firstOrNull { it.startsWith("Betreff") }
+    val lines = PdfExporter.clean(text).lines().map { it.trim() }
+    val first = lines.firstOrNull { it.startsWith("Betreff") }
+        ?: lines.firstOrNull { it.isNotBlank() }?.takeIf { it.length <= 50 && !it.endsWith(",") }
         ?: "Fold-KI-Dokument"
     val base = first.removePrefix("Betreff:").trim().take(40).replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "").trim()
     return (base.ifBlank { "Fold-KI-Dokument" }) + ".pdf"
@@ -440,6 +443,11 @@ private fun Thumbnail(a: Attachment, size: Int) {
 }
 
 @Composable
+private fun AnswerText(color: androidx.compose.ui.graphics.Color, text: String) {
+    SelectionContainer { Text(text, fontFamily = FontFamily.Serif, fontSize = 16.sp, lineHeight = 25.sp, color = color) }
+}
+
+@Composable
 private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions) {
     if (m.role == Role.USER) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
@@ -464,14 +472,42 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
         }
     } else {
         Column(Modifier.fillMaxWidth()) {
-            val clean = PdfExporter.clean(LetterParser.display(m.text))
-            val shown = if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean
-            SelectionContainer {
-                Text(
-                    shown,
-                    fontFamily = FontFamily.Serif, fontSize = 16.sp, lineHeight = 25.sp,
-                    color = if (m.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
-                )
+            val parts = remember(m.text) { DocumentParser.parse(m.text) }
+            val clean = remember(m.text) { DocumentParser.display(m.text) }
+            val doc = parts.document
+            // What the PDF/share buttons export: only the document, or the cleaned answer if there is none.
+            val exportText = doc ?: clean
+            val textColor = if (m.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground
+            if (doc == null) {
+                AnswerText(textColor, if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean)
+            } else {
+                if (parts.before.isNotBlank()) AnswerText(textColor, DocumentParser.clean(parts.before))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.padding(vertical = 8.dp).widthIn(max = 720.dp).fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        SelectionContainer {
+                            Text(doc, fontFamily = FontFamily.Serif, fontSize = 15.sp, lineHeight = 23.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        if (!typing) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+                                if (!parts.complete) Text("Unvollständig", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                                Spacer(Modifier.weight(1f))
+                                TextButton(onClick = { actions.savePdf(doc) }) {
+                                    Icon(Icons.Default.PictureAsPdf, null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp)); Text("PDF")
+                                }
+                                IconButton(onClick = { actions.sharePdf(doc) }) {
+                                    Icon(Icons.Default.Share, "Dokument als PDF teilen", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+                if (parts.after.isNotBlank()) AnswerText(textColor, DocumentParser.clean(parts.after))
             }
             if (m.attachments.isNotEmpty()) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
@@ -501,18 +537,18 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     IconButton(onClick = { actions.copy(clean) }) {
                         Icon(Icons.Default.ContentCopy, "Kopieren", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    TextButton(onClick = { actions.savePdf(LetterParser.parse(m.text).letter?.let { PdfExporter.clean(it) } ?: clean) }) {
+                    TextButton(onClick = { actions.savePdf(exportText) }) {
                         Icon(Icons.Default.PictureAsPdf, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(4.dp)); Text("Als PDF")
+                        Spacer(Modifier.width(4.dp)); Text(if (doc != null) "Als PDF" else "Antwort als PDF")
                     }
-                    IconButton(onClick = { actions.speak(m.id, PdfExporter.clean(LetterParser.spoken(m.text))) }) {
+                    IconButton(onClick = { actions.speak(m.id, DocumentParser.spoken(m.text)) }) {
                         Icon(
                             if (actions.speakingId == m.id) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
                             if (actions.speakingId == m.id) "Vorlesen stoppen" else "Vorlesen",
                             modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = { actions.sharePdf(clean) }) {
+                    IconButton(onClick = { actions.sharePdf(exportText) }) {
                         Icon(Icons.Default.Share, "PDF teilen", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Spacer(Modifier.weight(1f))
@@ -547,7 +583,8 @@ private fun InputBar(
         }
     }
     var plusOpen by remember { mutableStateOf(false) }
-    var cameraFile by remember { mutableStateOf<java.io.File?>(null) }
+    // Path survives if Android recreates the activity while the camera app is open.
+    var cameraPath by rememberSaveable { mutableStateOf<String?>(null) }
 
     val pickImage = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
         uris.forEach { vm.addAttachment(it) }
@@ -556,10 +593,10 @@ private fun InputBar(
         uris.forEach { vm.addAttachment(it) }
     }
     val takePhoto = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
-        val f = cameraFile
-        if (ok && f != null) {
-            vm.addAttachment(android.net.Uri.fromFile(f))
-        }
+        val f = cameraPath?.let { java.io.File(it) }
+        cameraPath = null
+        if (ok && f != null && f.length() > 0) vm.addAttachment(android.net.Uri.fromFile(f), deleteAfter = f)
+        else f?.delete()
     }
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -614,9 +651,23 @@ private fun InputBar(
                         }
                     }
                 }
-                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(6.dp)) {
+                // Text field over the full width (also on the narrow cover screen), buttons below it.
+                TextField(
+                    value = text, onValueChange = { text = it },
+                    placeholder = { Text(when { dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
+                    minLines = 1, maxLines = 5,
+                    // Full width on top; at most ~5 lines, then it scrolls inside instead of pushing the chat up.
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                        unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    ),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, bottom = 4.dp)) {
                     Box {
-                        IconButton(onClick = { plusOpen = true }, modifier = Modifier.padding(bottom = 4.dp)) {
+                        IconButton(onClick = { plusOpen = true }) {
                             Icon(Icons.Default.Add, "Datei hinzufügen")
                         }
                         DropdownMenu(expanded = plusOpen, onDismissRequest = { plusOpen = false }) {
@@ -634,7 +685,7 @@ private fun InputBar(
                                 onClick = {
                                     plusOpen = false
                                     val f = vm.attachments.newCameraFile()
-                                    cameraFile = f
+                                    cameraPath = f.absolutePath
                                     val uri = FileProvider.getUriForFile(context, context.packageName + ".files", f)
                                     runCatching { takePhoto.launch(uri) }.onFailure { vm.notify("Keine Kamera-App gefunden") }
                                 },
@@ -646,26 +697,15 @@ private fun InputBar(
                             )
                         }
                     }
-                    IconButton(onClick = vm::toggleWeb, modifier = Modifier.padding(bottom = 4.dp)) {
+                    IconButton(onClick = vm::toggleWeb) {
                         Icon(
                             Icons.Default.Language, if (ui.webSearch) "Websuche aus" else "Websuche an",
                             tint = if (ui.webSearch) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                         )
                     }
-                    TextField(
-                        value = text, onValueChange = { text = it },
-                        placeholder = { Text(when { dictating -> "Ich höre zu…"; ui.pending.isNotEmpty() -> "Frage zum Anhang…"; ui.webSearch -> "Im Internet nachfragen…"; else -> "Antworten…" }) },
-                        maxLines = 6,
-                        modifier = Modifier.weight(1f),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surface,
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                            focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                            unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                        ),
-                    )
+                    Spacer(Modifier.weight(1f))
                     if (!ui.generating) {
-                        IconButton(onClick = dictate, modifier = Modifier.padding(bottom = 4.dp)) {
+                        IconButton(onClick = dictate) {
                             Icon(
                                 if (dictating) Icons.Default.MicOff else Icons.Default.Mic, "Diktieren",
                                 tint = if (dictating) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,

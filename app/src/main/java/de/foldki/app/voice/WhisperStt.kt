@@ -153,6 +153,10 @@ class WhisperStt(context: Context) {
 
     // ---------------------------------------------------------------- transcription
 
+    /** Loads the model ahead of time (e.g. while the user is still speaking), so the answer comes faster. */
+    suspend fun warmUp() = withContext(Dispatchers.Default) { if (isReady) runCatching { load() } }
+
+    @Synchronized
     private fun load() {
         if (encoder != null) return
         if (!isReady) throw IllegalStateException("Spracherkennung ist noch nicht eingerichtet.")
