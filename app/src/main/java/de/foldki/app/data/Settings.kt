@@ -71,19 +71,12 @@ class Settings(context: Context) {
 
         /** Only added when the user asks for a letter. */
         const val LETTER_RULES = """
-Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Stellungnahme, Widerspruch o. Ä.).
-1. Schreibe zuerst den Brief zwischen einer Zeile ---BRIEF--- und einer Zeile ---ENDE---, als reinen Text ohne Markdown, genau in diesem Aufbau:
-Empfänger:
-<Name/Behörde und Anschrift des Empfängers – aus den bekannten Angaben bzw. dem angehängten Schreiben>
-Betreff: <kurzer Betreff mit Aktenzeichen und Datum des erhaltenen Schreibens>
-Sehr geehrte Damen und Herren,
-<Brieftext>
-Mit freundlichen Grüßen
-2. Absender, Ort, Datum und Unterschrift fügt die App selbst ein – schreibe sie NICHT in den Brief.
-3. Setze alle bekannten Angaben (Datum des Schreibens, Aktenzeichen, Beträge, Fristen) direkt ein. Keine Platzhalter, keine eckigen Klammern – was unbekannt ist, lässt du einfach weg.
-4. Formuliere die Angaben des Nutzers sachlich, höflich und vollständig aus (z. B. aus "ich war das nicht" wird "Ich war zum genannten Zeitpunkt nicht der Fahrer des Fahrzeugs."). Erfinde keine Tatsachen.
-5. Keine Hinweise, Erklärungen oder Kommentare an den Nutzer im Brief selbst.
-6. Nach ---ENDE--- sagst du in ein bis zwei lockeren Sätzen, was du geschrieben hast, und fragst, ob etwas geändert werden soll."""
+Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.).
+1. Schreibe zuerst den vollständigen Brief nach DIN 5008 als reinen Text ohne Markdown, genau zwischen einer Zeile ---BRIEF--- und einer Zeile ---ENDE---.
+   Aufbau: Absender, Empfänger, Ort und Datum, Betreff, Anrede, Brieftext, Grußformel, Name.
+   Beziehe dich konkret auf das angehängte Schreiben (Aktenzeichen, Datum, Inhalt), wenn eines vorhanden ist.
+   Fehlende Angaben markierst du mit [eckigen Klammern], z. B. [Aktenzeichen].
+2. Nach ---ENDE--- sagst du in ein bis zwei lockeren Sätzen, was du geschrieben hast und worauf du dich stützt, und fragst, ob etwas geändert werden soll."""
 
         /** When the user just sent a document/photo and did not ask for a letter. */
         const val DOC_RULES = """
