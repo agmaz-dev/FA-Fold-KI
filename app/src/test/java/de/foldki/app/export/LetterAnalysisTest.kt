@@ -58,4 +58,34 @@ class LetterAnalysisTest {
     @Test fun recipientKey() {
         assertEquals("zentralebußgeldstelle", LetterAnalysis.recipientKey("Zentrale Bußgeldstelle\nMusterstraße 1"))
     }
+
+    @Test fun repairsLetterFromSmallModel() {
+        val doc = """
+            Falkensee, 16.11.2026
+
+            Sehr geehrte Damen und Herren,
+
+            16.11.2026
+
+            Betreff: Widerspruch gegen Ihr Schreiben vom [Datum des angehängten Schreibens] – Aktenzeichen: 40297011
+
+            Sehr geehrte Damen und Herren,
+
+            ich nehme Bezug auf Ihr Schreiben vom [Datum des angehängten Schreibens], betreffend die Anhörung.
+
+            Mit freundlichen Grüßen
+
+            Paula Fischer
+        """.trimIndent()
+        val fixed = LetterAnalysis.fixPlaceholders(doc, null, null, null, null, null)
+        val out = LetterAnalysis.tidy(fixed, sender = "Paula Fischer\nLindenallee 18\n14612 Falkensee", recipient = "Zentrale Bußgeldstelle\nMusterstraße 1\n12345 Musterstadt")
+        assertFalse(out.contains("["))
+        assertTrue(out.contains("Betreff: Widerspruch gegen Ihr Schreiben – Aktenzeichen: 40297011"))
+        assertTrue(out.contains("auf Ihr Schreiben, betreffend"))
+        assertEquals(1, Regex("Sehr geehrte").findAll(out).count())
+        assertEquals(1, Regex("16\\.11\\.2026").findAll(out).count())
+        assertTrue(out.startsWith("Paula Fischer\nLindenallee 18"))
+        assertTrue(out.contains("Zentrale Bußgeldstelle\nMusterstraße 1"))
+        assertTrue(out.indexOf("Zentrale") < out.indexOf("Betreff"))
+    }
 }

@@ -577,8 +577,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val original = _ui.value.conversations.firstOrNull { it.id == convId }?.messages
             ?.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }?.attachments?.lastOrNull()
         val facts = original?.analysis?.let { de.foldki.app.export.LetterAnalysis.parse(it) }
-        val doc = de.foldki.app.export.LetterAnalysis.completeEnding(
-            de.foldki.app.export.LetterAnalysis.fixPlaceholders(rawDoc, original?.docDate, original?.refNo ?: facts?.reference, facts?.amount, facts?.deadline, facts?.contact),
+        val doc = de.foldki.app.export.LetterAnalysis.tidy(
+            de.foldki.app.export.LetterAnalysis.completeEnding(
+                de.foldki.app.export.LetterAnalysis.fixPlaceholders(rawDoc, original?.docDate, original?.refNo ?: facts?.reference, facts?.amount, facts?.deadline, facts?.contact),
+            ),
+            sender = settings.activeSender?.toLegacyText()?.ifBlank { null },
+            recipient = original?.recipient,
         )
         if (doc != rawDoc) editMessage(convId, msgId) { it.copy(text = it.text.replace(rawDoc, doc)) }
         de.foldki.app.export.LetterAnalysis.recipientKey(original?.recipient)?.let { key ->

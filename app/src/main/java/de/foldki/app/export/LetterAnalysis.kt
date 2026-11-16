@@ -93,7 +93,10 @@ object LetterAnalysis {
 
     /** Leftover placeholders like „[Datum des Schreibens einfügen …]“: fill from the facts or remove (FA-PDF). */
     fun fixPlaceholders(t: String, letterDate: String?, reference: String?, amount: String?, deadline: String?, contact: String?): String =
-        t.replace(Regex("[ \\t]?\\[([^\\]\\n]{2,160})]")) { m ->
+        // "vom [Datum …]" without a known date: drop the whole "vom …" instead of leaving a gap
+        t.replace(Regex("\\s+vom\\s+\\[[^\\]\\n]*datum[^\\]\\n]*]", RegexOption.IGNORE_CASE)) {
+            if (!letterDate.isNullOrBlank()) " vom $letterDate" else ""
+        }.replace(Regex("[ \\t]?\\[([^\\]\\n]{2,160})]")) { m ->
             val inner = m.groupValues[1]
             fun has(v: String?) = !v.isNullOrBlank()
             when {
@@ -103,8 +106,8 @@ object LetterAnalysis {
                 inner.contains("frist", true) && has(deadline) -> " $deadline"
                 inner.contains("ansprechpartner", true) && has(contact) -> " $contact"
                 Regex("(?i)einfügen|falls|sonst|weglassen|bitte|angeben|unbekannt|xx|hier können|ihr(en)? grund").containsMatchIn(inner) -> ""
-                inner.length > 50 -> "" // long remarks to the user never belong in a letter
-                else -> m.value
+                else -> "" // no placeholders in a finished letter: unknown = left out
+
             }
         }.replace(Regex("[ \\t]{2,}"), " ").replace(Regex(" ([,.])"), "$1")
 
@@ -119,6 +122,37 @@ object LetterAnalysis {
             if (cut > b.length / 2) b = b.substring(0, cut + 1)
         }
         return "$b\n\nMit freundlichen Grüßen"
+    }
+
+    private val SALUTATION = Regex("^\\s*(Sehr geehrte|Guten Tag|Hallo|Liebe|Lieber)", RegexOption.IGNORE_CASE)
+    private val DATE_ONLY = Regex("^\\s*(den\\s+)?\\d{1,2}\\.\\s?\\d{1,2}\\.\\s?\\d{2,4}\\s*$")
+    private val PLACE_DATE = Regex("^\\s*[\\p{L} .\\-/()]{2,40},\\s*(den\\s+)?\\d{1,2}\\.\\s?\\d{1,2}\\.\\s?\\d{2,4}\\s*$")
+
+    /**
+     * Repairs the head of a letter written by a small model: a salutation above the subject is removed,
+     * duplicate date lines are reduced to one, and a missing sender block / recipient address is added.
+     */
+    fun tidy(doc: String, sender: String?, recipient: String?): String {
+        val lines = doc.lines().toMutableList()
+        val subj = lines.indexOfFirst { it.trim().startsWith("Betreff", true) }
+        if (subj > 0 && lines.drop(subj + 1).any { SALUTATION.containsMatchIn(it) }) {
+            // salutation(s) wrongly above the subject
+            for (i in subj - 1 downTo 0) if (SALUTATION.containsMatchIn(lines[i])) lines.removeAt(i)
+        }
+        val head = lines.indexOfFirst { it.trim().startsWith("Betreff", true) || SALUTATION.containsMatchIn(it) }.let { if (it < 0) lines.size else it }
+        val dateIdx = (0 until head).filter { DATE_ONLY.matches(lines[it]) || PLACE_DATE.matches(lines[it]) }
+        if (dateIdx.size > 1) {
+            val keep = dateIdx.firstOrNull { PLACE_DATE.matches(lines[it]) } ?: dateIdx.first()
+            dateIdx.filter { it != keep }.sortedDescending().forEach { lines.removeAt(it) }
+        }
+        var text = lines.joinToString("\n").replace(Regex("\\n{3,}"), "\n\n").trim()
+        val headText = text.substringBefore("Betreff")
+        fun firstLine(b: String?) = b?.lines()?.firstOrNull { it.isNotBlank() }?.trim()
+        val blocks = mutableListOf<String>()
+        firstLine(sender)?.let { if (!headText.contains(it, true)) blocks += sender!!.trim() }
+        firstLine(recipient)?.let { if (!text.contains(it, true)) blocks += recipient!!.trim() }
+        if (blocks.isNotEmpty()) text = blocks.joinToString("\n\n") + "\n\n" + text
+        return text
     }
 
     /** Key to remember the sender profile used for a recipient (first line, letters/digits only). */
