@@ -12,8 +12,8 @@ android {
         applicationId = "de.foldki.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.6.1"
+        versionCode = 13
+        versionName = "1.7"
         // Galaxy Z Fold7 and all current phones are 64-bit ARM; keeps the APK small.
         ndk { abiFilters += "arm64-v8a" }
     }

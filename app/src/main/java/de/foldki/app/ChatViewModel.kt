@@ -40,7 +40,7 @@ data class UiState(
 
 /** Words that mean "please write me a letter". */
 private val LETTER_WORDS = Regex(
-    "brief|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|" +
+    "brief|stellungnahme|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|" +
         "ein schreiben|das schreiben|formelles schreiben|schreib (ihm|ihr|ihnen|denen|zurück)|antworte (ihm|ihr|ihnen|denen|darauf)|" +
         "formulier",
     RegexOption.IGNORE_CASE,
@@ -237,13 +237,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Puts the written letter into the chat as a PDF (open/share like any attachment). */
+    /**
+     * Turns the AI's letter into a clean DIN 5008 letter (sender/date/signature from the app),
+     * shows it in the chat and attaches it as PDF.
+     */
     private fun attachLetterPdf(convId: String, msgId: String) {
         val msg = _ui.value.conversations.firstOrNull { it.id == convId }?.messages?.firstOrNull { it.id == msgId } ?: return
         if (msg.isError) return
-        val letter = de.foldki.app.export.LetterParser.parse(msg.text).letter ?: return
-        val pdf = runCatching { attachments.createPdf(de.foldki.app.export.PdfExporter.clean(letter)) }.getOrNull() ?: return
-        editMessage(convId, msgId) { it.copy(attachments = it.attachments + pdf) }
+        val parts = de.foldki.app.export.LetterParser.parse(msg.text)
+        val raw = parts.letter ?: return
+        val letter = de.foldki.app.export.LetterBuilder.build(raw, settings.sender)
+        val pdf = runCatching { attachments.createLetterPdf(letter) }.getOrNull()
+        val newText = listOf(parts.before, "---BRIEF---\n" + letter.asText() + "\n---ENDE---", parts.after)
+            .filter { it.isNotBlank() }.joinToString("\n\n")
+        editMessage(convId, msgId) { it.copy(text = newText, attachments = it.attachments + listOfNotNull(pdf)) }
     }
 
     /** Letter rules only when the user actually asks for a letter – otherwise the AI talks normally. */
@@ -252,7 +259,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         append("Heutiges Datum: ").append(java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())).append("\n")
         if (letter) {
             append(Settings.LETTER_RULES).append("\n")
-            if (settings.sender.isNotBlank()) append("Absender des Nutzers:\n").append(settings.sender).append("\n")
         }
     }
 

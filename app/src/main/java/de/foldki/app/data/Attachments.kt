@@ -63,6 +63,16 @@ class Attachments(private val context: Context) {
         return Attachment(id = id, name = name, mime = "application/pdf", path = file.absolutePath, text = "")
     }
 
+    /** Saves a finished letter as DIN 5008 PDF in the chat attachments. */
+    fun createLetterPdf(letter: de.foldki.app.export.LetterBuilder.Letter): Attachment {
+        val subject = letter.subject.take(40).replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "").trim()
+        val name = (subject.ifBlank { "Schreiben" }) + ".pdf"
+        val id = UUID.randomUUID().toString()
+        val file = File(dir, "$id.pdf")
+        file.outputStream().use { de.foldki.app.export.LetterBuilder.writePdf(letter, it) }
+        return Attachment(id = id, name = name, mime = "application/pdf", path = file.absolutePath, text = "")
+    }
+
     /** A fresh file for the camera to write a photo into. */
     fun newCameraFile(): File = File(dir, "camera_${System.currentTimeMillis()}.jpg")
 
