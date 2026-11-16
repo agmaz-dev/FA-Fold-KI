@@ -88,4 +88,33 @@ class LetterAnalysisTest {
         assertTrue(out.contains("Zentrale Bußgeldstelle\nMusterstraße 1"))
         assertTrue(out.indexOf("Zentrale") < out.indexOf("Betreff"))
     }
+
+    @Test fun assembleBuildsHeadItself() {
+        val model = """
+            Absender:
+            Paula Fischer
+            Lindenallee 186-90
+            Datum:16.1112626
+            Betreff: Widerspruch gegen die offene Forderung – Zeichen 4711230
+
+            Sehr geehrte Damen und Herren,
+
+            ich widerspreche der Forderung über 57,00 Euro und werde den Betrag nicht zahlen.
+
+            Mit freundlichen Grüßen
+
+            Paula Fischer
+        """.trimIndent()
+        val out = LetterAnalysis.assemble(
+            model, sender = "Paula Fischer\nLindenallee 18\n14612 Falkensee",
+            recipient = "MKK Muster Krankenkasse\nMusterallee 86-90\n20095 Hamburg",
+            placeDate = "Falkensee, 16.11.2026", name = "Paula Fischer",
+        )
+        assertTrue(out.startsWith("Paula Fischer\nLindenallee 18\n14612 Falkensee\n\nMKK Muster Krankenkasse"))
+        assertFalse(out.contains("186-90"))
+        assertFalse(out.contains("16.1112626"))
+        assertTrue(out.contains("Falkensee, 16.11.2026\n\nBetreff: Widerspruch gegen die offene Forderung – Zeichen 4711230\n\nSehr geehrte"))
+        assertTrue(out.endsWith("Mit freundlichen Grüßen\n\nPaula Fischer"))
+        assertEquals(2, Regex("Paula Fischer").findAll(out).count())
+    }
 }

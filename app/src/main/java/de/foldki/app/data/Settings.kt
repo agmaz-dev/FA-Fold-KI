@@ -217,17 +217,22 @@ So antwortest du:
 6. Frag nur nach, wenn es wirklich nötig ist, dann mit einer einzigen kurzen Frage.
 7. Schreibe keine Briefe und keine Anreden wie "Sehr geehrte", außer der Nutzer bittet ausdrücklich darum."""
 
+        /** What the app can do – so the model never claims it cannot create PDFs or see files. */
+        const val APP_ABILITIES = "Die App liest Dateien und Fotos, die der Nutzer anhängt, und macht aus jedem Brief automatisch ein PDF. " +
+            "Sag nie, dass du keine PDFs erstellen oder keine Dateien sehen kannst."
+
         /** Only added when the user asks for a letter. */
         const val LETTER_RULES = """
-Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.).
-1. Schreibe den vollständigen Brief nach DIN 5008 als reinen Text ohne Markdown, genau zwischen einer Zeile ---DOKUMENT--- und einer Zeile ---ENDE---.
-   Aufbau: Absender, Empfänger, Ort und Datum, Betreff, Anrede, Brieftext, Grußformel, Name.
-2. Die Datumszeile ist genau das Datum aus "Datum für das neue Schreiben (heute)" im Format TT.MM.JJJJ, z. B. "Berlin, 16.11.2026". Nie ein anderes Datum und nie das Datum des angehängten Schreibens.
-3. Gibt es ein angehängtes Schreiben: Empfänger ist genau "Empfänger (aus dem Originalschreiben)". Im Bezugssatz "Ihr Schreiben vom …" steht nur "Datum des angehängten Schreibens". Ein Zeichen oder Aktenzeichen des Originals gibst du an.
-4. Erfinde nichts. Steht bei "Datum des angehängten Schreibens" oder "Empfänger (aus dem Originalschreiben)" "unbekannt" und hat der Nutzer es auch im Gespräch nicht genannt, schreibe noch keinen Brief. Stelle stattdessen nur eine einzige kurze Frage nach dem Fehlenden, z. B. "Von welchem Datum ist das Schreiben, und an wen geht die Antwort?". Hat der Nutzer es genannt, nimm seine Angabe.
-5. Setze alle bekannten Angaben (Datum, Aktenzeichen, Beträge, Fristen) direkt ein. Keine Platzhalter, keine eckigen Klammern – was unbekannt ist, lässt du einfach weg. Keine Hinweise oder Erklärungen an den Nutzer im Brief.
-   Formuliere die Angaben des Nutzers sachlich und vollständig aus (z. B. aus "ich war das nicht" wird "Ich war zum genannten Zeitpunkt nicht der Fahrer des Fahrzeugs.").
-6. Nach ---ENDE--- schreibst du einen sachlichen Satz, worauf du dich stützt."""
+Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.). Schreibe es SOFORT mit den vorhandenen Angaben – keine Rückfragen.
+Gib zwischen einer Zeile ---DOKUMENT--- und einer Zeile ---ENDE--- GENAU dieses Format aus, als reinen Text ohne Markdown:
+Betreff: <kurzer Betreff mit Bezug, z. B. Zeichen/Nummer des Schreibens>
+<Anrede>,
+<Brieftext in 2 bis 4 Absätzen: zuerst Bezug auf das erhaltene Schreiben (Datum, Zeichen), dann das Anliegen des Nutzers sachlich und vollständig ausformuliert, am Ende klar, was erwartet wird>
+Mit freundlichen Grüßen
+Keine Adressen, kein Datum, keinen Namen unter dem Gruß, keine Platzhalter in eckigen Klammern – Absender, Empfänger, Datum und Unterschrift setzt die App selbst ein.
+Übernimm Beträge, Daten und Nummern genau so, wie sie unten stehen. Erfinde keine Namen von Ansprechpartnern.
+Formuliere die Worte des Nutzers sachlich aus (z. B. aus "ich zahle das nicht" wird "Ich widerspreche der Forderung und werde den Betrag nicht zahlen.").
+Nach ---ENDE--- schreibst du einen kurzen Satz dazu."""
 
         /** Added to letters when a sender profile is active. */
         const val SENDER_RULES = """

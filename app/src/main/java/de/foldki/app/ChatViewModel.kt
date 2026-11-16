@@ -629,12 +629,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val original = _ui.value.conversations.firstOrNull { it.id == convId }?.messages
             ?.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }?.attachments?.lastOrNull()
         val facts = original?.analysis?.let { de.foldki.app.export.LetterAnalysis.parse(it) }
-        val doc = de.foldki.app.export.LetterAnalysis.tidy(
-            de.foldki.app.export.LetterAnalysis.completeEnding(
-                de.foldki.app.export.LetterAnalysis.fixPlaceholders(rawDoc, original?.docDate, original?.refNo ?: facts?.reference, facts?.amount, facts?.deadline, facts?.contact),
-            ),
-            sender = settings.activeSender?.toLegacyText()?.ifBlank { null },
-            recipient = original?.recipient,
+        val fixed = de.foldki.app.export.LetterAnalysis.fixPlaceholders(rawDoc, original?.docDate, original?.refNo ?: facts?.reference, facts?.amount, facts?.deadline, facts?.contact)
+        val profile = settings.activeSender
+        // Like FA-PDF: the model wrote subject + body, the app sets the letter head and the name.
+        val doc = de.foldki.app.export.LetterAnalysis.assemble(
+            fixed,
+            sender = profile?.toLegacyText()?.ifBlank { null },
+            recipient = original?.recipient ?: facts?.sender?.ifBlank { null },
+            placeDate = listOfNotNull(profile?.city?.ifBlank { null }, today()).joinToString(", "),
+            name = profile?.name?.ifBlank { null },
         )
         if (doc != rawDoc) editMessage(convId, msgId) { it.copy(text = it.text.replace(rawDoc, doc)) }
         de.foldki.app.export.LetterAnalysis.recipientKey(original?.recipient)?.let { key ->
@@ -706,6 +709,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (letter || followUpDoc || DOC_WORDS.containsMatchIn(lastAsk)) append(Settings.DOCUMENT_MARKER_RULE).append("\n")
         if (followUpDoc) append(Settings.DOCUMENT_FOLLOWUP_RULE).append("\n")
         append("Heutiges Datum: ").append(today()).append("\n")
+        append(Settings.APP_ABILITIES).append("\n")
         if (letter) {
             append(Settings.LETTER_RULES).append("\n")
             append("Datum für das neue Schreiben (heute): ").append(today()).append("\n")
@@ -723,10 +727,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (r.note.isNotBlank()) append("Handschriftliche Notiz des Nutzers auf dem Schreiben: ").append(r.note).append("\n")
                 }
             }
-            settings.activeSender?.takeIf { it.toLegacyText().isNotBlank() }?.let {
-                append(de.foldki.app.data.SenderProfile.promptBlock(it)).append("\n")
-                append(Settings.SENDER_RULES).append("\n")
-            }
+            // Sender, recipient, date and signature are set by the app (LetterAnalysis.assemble), not by the model.
         }
     }
 

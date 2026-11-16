@@ -108,9 +108,12 @@ class GemmaEngine(context: Context) {
     /** Text of files from the last 3 questions only (older attachments do not take over every answer). */
     private fun recentDocs(history: List<ChatMessage>): String {
         val recentUser = history.filter { it.role == Role.USER }.takeLast(3)
+        // The most recently attached letter always stays visible in this chat (otherwise Gemma says "no file").
+        val latest = history.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }
+        val files = (listOfNotNull(latest) + recentUser.asReversed()).flatMap { it.attachments }.distinctBy { it.id }
         val sb = StringBuilder()
         var budget = 16000
-        recentUser.asReversed().flatMap { it.attachments }.forEach { a ->
+        files.forEach { a ->
             if (budget <= 0 || a.text.isBlank()) return@forEach
             val t = a.text.take(budget); budget -= t.length
             sb.append("--- ").append(a.name).append(" ---\n").append(t).append("\n\n")

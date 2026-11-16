@@ -121,7 +121,9 @@ Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
         // With web results in the prompt, documents get less room so Nano's small input limit is not exceeded.
         var budget = if (large) (if (web.isNotBlank()) 16000 else 24000) else if (web.isNotBlank()) 2500 else 4500
         // Only files from the last 3 questions: older attachments must not take over every answer.
-        history.filter { it.role == Role.USER }.takeLast(3).asReversed().flatMap { it.attachments }.forEach { a ->
+        val latest = history.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }
+        (listOfNotNull(latest) + history.filter { it.role == Role.USER }.takeLast(3).asReversed())
+            .flatMap { it.attachments }.distinctBy { it.id }.forEach { a ->
             if (budget <= 0 || a.text.isBlank()) return@forEach
             val t = a.text.take(budget)
             budget -= t.length

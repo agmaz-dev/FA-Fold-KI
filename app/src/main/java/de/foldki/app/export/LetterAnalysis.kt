@@ -165,6 +165,38 @@ object LetterAnalysis {
         return text
     }
 
+    private val HEAD_LABEL = Regex(
+        "^\\s*(absender|empfänger|datum|unser zeichen|ihr zeichen|zeichen des|initialen|adresse|telefon|e-mail|ort)\\b.*",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * FA-PDF way: the model only delivers "Betreff: …", salutation, text and closing.
+     * The app builds the letter: sender block, recipient, place/date, subject, body, name.
+     * Whatever the model wrote into the head (labels, addresses, broken dates) is dropped.
+     */
+    fun assemble(doc: String, sender: String?, recipient: String?, placeDate: String, name: String?): String {
+        val lines = doc.replace("**", "").lines()
+        val subjIdx = lines.indexOfFirst { it.trim().startsWith("Betreff", true) }
+        val salIdx = lines.indices.firstOrNull { it > subjIdx && SALUTATION.containsMatchIn(lines[it]) }
+            ?: lines.indices.firstOrNull { SALUTATION.containsMatchIn(lines[it]) } ?: -1
+        val subject = if (subjIdx >= 0) lines[subjIdx].trim().replace(Regex("^Betreff\\s*:?\\s*", RegexOption.IGNORE_CASE), "").trim() else ""
+        val bodyStart = when { salIdx >= 0 -> salIdx; subjIdx >= 0 -> subjIdx + 1; else -> 0 }
+        var body = lines.drop(bodyStart).filterNot { HEAD_LABEL.matches(it) }.joinToString("\n")
+            .replace(Regex("\\n{3,}"), "\n\n").trim()
+        // the name under the closing is set by the app
+        if (!name.isNullOrBlank()) body = body.lines().dropLastWhile { it.isBlank() || it.trim().equals(name.trim(), true) }.joinToString("\n")
+        body = completeEnding(body)
+        return buildString {
+            sender?.trim()?.takeIf { it.isNotEmpty() }?.let { append(it).append("\n\n") }
+            recipient?.trim()?.takeIf { it.isNotEmpty() }?.let { append(it).append("\n\n") }
+            append(placeDate).append("\n\n")
+            if (subject.isNotBlank()) append("Betreff: ").append(subject).append("\n\n")
+            append(body)
+            if (!name.isNullOrBlank()) append("\n\n").append(name.trim())
+        }
+    }
+
     /** Key to remember the sender profile used for a recipient (first line, letters/digits only). */
     fun recipientKey(r: String?): String? =
         r?.lines()?.firstOrNull { it.isNotBlank() }?.lowercase()?.replace(Regex("[^a-zäöüß0-9]"), "")?.take(40)?.takeIf { it.length >= 3 }
