@@ -41,10 +41,10 @@ object LetterBuilder {
     // Long remarks in brackets are instructions to the user, not letter text ("[Hier können Sie …]").
     private val META = Regex("\\[[^\\]]{50,}\\]")
 
-    fun build(aiLetter: String, senderSetting: String): Letter {
+    fun build(aiLetter: String, senderSetting: String, facts: LetterFacts = LetterFacts()): Letter {
         val sender = senderSetting.lines().map { it.trim() }.filter { it.isNotEmpty() }
         val senderSet = sender.map { it.lowercase() }.toSet()
-        val lines = PdfExporter.clean(aiLetter).replace(META, "").lines().map { it.trimEnd() }
+        val lines = facts.fixPlaceholders(PdfExporter.clean(aiLetter)).replace(META, "").lines().map { it.trimEnd() }
 
         // Recipient: block after "Empfänger:" (or "An:") up to the next empty line / Betreff
         val recipient = mutableListOf<String>()
@@ -93,9 +93,20 @@ object LetterBuilder {
 
         val city = sender.firstOrNull { Regex("^\\d{5}\\s+\\S").containsMatchIn(it) }?.substringAfter(" ")?.trim()
         val date = SimpleDateFormat("dd.MM.yyyy", Locale.GERMANY).format(Date())
+        // Recipient: what the AI wrote, unless it is empty or a placeholder – then the sender of the received letter
+        val aiRecipient = recipient.filterNot { it.lowercase() in senderSet || it.isBlank() }
+        val finalRecipient = if (aiRecipient.isEmpty() || aiRecipient.any { it.contains("[") }) {
+            facts.sender.lines().filter { it.isNotBlank() }.ifEmpty { aiRecipient }
+        } else aiRecipient
+        if (subject.isBlank() || subject.contains("[")) {
+            subject = listOfNotNull(
+                "Ihr Schreiben" + (if (facts.letterDate.isNotBlank()) " vom ${facts.letterDate}" else ""),
+                facts.reference.takeIf { it.isNotBlank() },
+            ).joinToString(" – ").takeIf { facts.letterDate.isNotBlank() || facts.reference.isNotBlank() } ?: subject
+        }
         return Letter(
             sender = sender,
-            recipient = recipient.filterNot { it.lowercase() in senderSet },
+            recipient = finalRecipient,
             placeDate = if (city != null) "$city, $date" else date,
             subject = subject.ifBlank { "[Betreff]" },
             body = body,

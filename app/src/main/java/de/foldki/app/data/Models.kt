@@ -13,6 +13,8 @@ data class Attachment(
     val mime: String,
     val path: String,
     val text: String = "",
+    /** Key facts read from a received letter (BRIEFDATUM:, ABSENDER:, BEZUG: … lines), filled on first use. */
+    val facts: String = "",
 ) {
     val isImage get() = mime.startsWith("image/")
     val isPdf get() = mime == "application/pdf"

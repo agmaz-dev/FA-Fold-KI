@@ -36,6 +36,7 @@ class ChatStore(context: Context) {
                                         id = x.getString("id"), name = x.getString("name"),
                                         mime = x.getString("mime"), path = x.getString("path"),
                                         text = x.optString("text"),
+                                        facts = x.optString("facts"),
                                     )
                                 }
                             } ?: emptyList(),
@@ -61,7 +62,7 @@ class ChatStore(context: Context) {
                         m.attachments.forEach { a ->
                             put(JSONObject().apply {
                                 put("id", a.id); put("name", a.name); put("mime", a.mime)
-                                put("path", a.path); put("text", a.text)
+                                put("path", a.path); put("text", a.text); put("facts", a.facts)
                             })
                         }
                     })

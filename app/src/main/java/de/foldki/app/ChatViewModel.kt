@@ -214,9 +214,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
         job = viewModelScope.launch {
             try {
+                // Letter: first read the key facts of the received letter (once per document), like FA-PDF.
+                var sys = system
+                if (wantsLetter) {
+                    val facts = readFacts(conv.id, history, engine)
+                    if (facts != null) {
+                        lastFacts = facts
+                        val known = facts.forPrompt()
+                        if (known.isNotBlank()) sys += "\nBekannte Angaben aus dem erhaltenen Schreiben (direkt einsetzen):\n$known"
+                    } else lastFacts = de.foldki.app.export.LetterFacts()
+                }
                 val flow = when (engine) {
-                    Engine.NANO -> nano.reply(system, history, web)
-                    Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history, web)
+                    Engine.NANO -> nano.reply(sys, history, web)
+                    Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, sys, history, web)
                 }
                 flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -237,6 +247,39 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private var lastFacts = de.foldki.app.export.LetterFacts()
+
+    /**
+     * Key facts of the latest received document in this chat. The analysis runs once per document
+     * (stored on the attachment); returns null if the chat has no readable document.
+     */
+    private suspend fun readFacts(convId: String, history: List<ChatMessage>, engine: Engine): de.foldki.app.export.LetterFacts? {
+        val doc = history.asReversed().flatMap { it.attachments.asReversed() }
+            .firstOrNull { it.text.isNotBlank() || (engine == Engine.CLAUDE && (it.isPdf || it.isImage)) } ?: return null
+        var raw = doc.facts
+        if (raw.isBlank()) {
+            raw = runCatching {
+                val ask = listOf(ChatMessage(role = Role.USER, text = "Lies das angehängte Schreiben und antworte im verlangten Zeilenformat.", attachments = listOf(doc)))
+                val sb = StringBuilder()
+                val flow = when (engine) {
+                    Engine.NANO -> nano.reply(de.foldki.app.export.LetterFacts.ANALYZE, ask, false)
+                    Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, de.foldki.app.export.LetterFacts.ANALYZE, ask, false)
+                }
+                flow.collect { sb.append(it) }
+                sb.toString()
+            }.getOrDefault("")
+            if (raw.isNotBlank()) {
+                // remember on the attachment so the next letter does not read it again
+                _ui.update { st -> st.copy(conversations = st.conversations.map { c ->
+                    if (c.id != convId) c else c.copy(messages = c.messages.map { m ->
+                        m.copy(attachments = m.attachments.map { a -> if (a.id == doc.id) a.copy(facts = raw) else a })
+                    })
+                }) }
+            }
+        }
+        return de.foldki.app.export.LetterFacts.parse(raw, doc.text)
+    }
+
     /**
      * Turns the AI's letter into a clean DIN 5008 letter (sender/date/signature from the app),
      * shows it in the chat and attaches it as PDF.
@@ -246,7 +289,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (msg.isError) return
         val parts = de.foldki.app.export.LetterParser.parse(msg.text)
         val raw = parts.letter ?: return
-        val letter = de.foldki.app.export.LetterBuilder.build(raw, settings.sender)
+        val letter = de.foldki.app.export.LetterBuilder.build(raw, settings.sender, lastFacts)
         val pdf = runCatching { attachments.createLetterPdf(letter) }.getOrNull()
         val newText = listOf(parts.before, "---BRIEF---\n" + letter.asText() + "\n---ENDE---", parts.after)
             .filter { it.isNotBlank() }.joinToString("\n\n")
