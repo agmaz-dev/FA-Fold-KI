@@ -82,6 +82,8 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -384,6 +386,25 @@ private fun ChatScreen(
     }
     LaunchedEffect(ui.notice) {
         ui.notice?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show(); vm.notify(null) }
+    }
+    // GitHub: nothing changes without the user's approval.
+    ui.approval?.let { a ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Freigabe: ${a.title}") },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("Claude möchte auf GitHub Folgendes tun:", fontSize = 13.sp)
+                    androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+                    Text(
+                        a.details, fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    )
+                }
+            },
+            confirmButton = { Button(onClick = { vm.answerApproval(true) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Freigeben") } },
+            dismissButton = { TextButton(onClick = { vm.answerApproval(false) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Ablehnen") } },
+        )
     }
 
     val voice = vm.voice

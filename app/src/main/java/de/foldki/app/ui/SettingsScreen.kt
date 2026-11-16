@@ -10,6 +10,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -78,6 +79,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     var key by remember { mutableStateOf(vm.settings.apiKey) }
     var model by remember { mutableStateOf(vm.settings.claudeModel) }
     var system by remember { mutableStateOf(vm.settings.systemPrompt) }
+    var ghToken by remember { mutableStateOf(vm.githubToken) }
     // Sub-page: edit a sender profile (folded full screen, unfolded inside the left pane).
     var editProfile by rememberSaveable { mutableStateOf<String?>(null) }
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
@@ -87,7 +89,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     val stReady = stStatus == READY || vm.voice.isReady
 
     fun saveAndClose() {
-        vm.saveSettings(key, model, system); vm.saveVoice(stVoice, rate)
+        vm.saveSettings(key, model, system); vm.saveVoice(stVoice, rate); vm.saveGitHubToken(ghToken)
         onBack()
     }
     editProfile?.let { id ->
@@ -133,6 +135,27 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                                 Text(label)
                             }
                         }
+                    }
+                    Card("github", Icons.Default.Code, "GitHub (über Claude)", if (ghToken.isBlank()) "Nicht verbunden" else "Verbunden · Änderungen nur mit Freigabe") {
+                        OutlinedTextField(
+                            value = ghToken, onValueChange = { ghToken = it },
+                            label = { Text("GitHub-Token") },
+                            placeholder = { Text("github_pat_… oder ghp_…") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Hint(
+                            "Mit Token kann Claude auf GitHub suchen, Code lesen, Bausteine übernehmen, Repositorys anlegen, " +
+                                "Dateien committen, Pull Requests erstellen und APKs mit GitHub Actions bauen. " +
+                                "Jede Änderung zeigt die App dir vorher – erst nach „Freigeben“ passiert sie.",
+                        )
+                        Hint(
+                            "Token erstellen: github.com → Settings → Developer settings → Personal access tokens. " +
+                                "Rechte: Contents, Pull requests, Issues, Actions und Workflows (Lesen und Schreiben), " +
+                                "Administration (zum Anlegen von Repositorys). Wird nur auf diesem Gerät gespeichert.",
+                        )
+                        if (key.isBlank()) Hint("Dafür braucht es auch den Claude-API-Schlüssel (Karte „Claude“).")
                     }
                     Card("gemma", Icons.Default.Memory, "Optionale On-Device-Modelle", gemmaSummary(ui)) { GemmaSettings(vm, ui) }
                     Card("brief", Icons.Default.WbSunny, "Tagesstart (offline)", briefSummary(vm)) { BriefSettings(vm) }

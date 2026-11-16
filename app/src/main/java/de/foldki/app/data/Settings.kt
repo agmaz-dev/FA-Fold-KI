@@ -20,6 +20,11 @@ class Settings(context: Context) {
         get() = prefs.getString("api_key", "") ?: ""
         set(v) = prefs.edit().putString("api_key", v.trim()).apply()
 
+    /** GitHub token (fine-grained or classic) – only on this device; Claude uses it for GitHub tasks after approval. */
+    var githubToken: String
+        get() = prefs.getString("github_token", "") ?: ""
+        set(v) = prefs.edit().putString("github_token", v.trim()).apply()
+
     var claudeModel: String
         get() = prefs.getString("claude_model", DEFAULT_MODEL) ?: DEFAULT_MODEL
         set(v) = prefs.edit().putString("claude_model", v).apply()

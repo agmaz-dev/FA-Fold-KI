@@ -46,11 +46,23 @@ data class UiState(
     /** Optional Gemma 4 E2B: download state and the switch "Gemma verwenden". */
     val gemma: LocalModelManager.State = LocalModelManager.State.NotDownloaded,
     val gemmaEnabled: Boolean = false,
+    /** A GitHub change waiting for the user's "Freigeben" / "Ablehnen". */
+    val approval: Approval? = null,
+    val githubSet: Boolean = false,
 ) {
     /** Gemma answers instead of Nano (Nano stays the fallback). */
     val gemmaActive: Boolean get() = engine == Engine.NANO && gemmaEnabled && gemma is LocalModelManager.State.Ready
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
+
+data class Approval(val title: String, val details: String)
+
+/** GitHub tasks (go to Claude with GitHub tools when a token is set). */
+private val GITHUB_WORDS = Regex(
+    "github|\\brepo(s|sitor(y|ys|ies|ium|ien))?\\b|pull ?request|\\bcommit|\\bbranch|workflow|\\bapk\\b|programmier|quellcode|\\bcode\\b|" +
+        "\\bbuild\\b|bauen? (die|eine|mir eine) app|app bauen|kotlin|gradle",
+    RegexOption.IGNORE_CASE,
+)
 
 /** Words that mean "please write me a letter". */
 /** Requests for a document other than a letter (list, summary, PDF …). */
@@ -134,6 +146,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             engine = settings.engine,
             model = settings.claudeModel,
             apiKeySet = settings.apiKey.isNotBlank(),
+            githubSet = settings.githubToken.isNotBlank(),
             webSearch = settings.webSearch,
             gemmaEnabled = settings.gemmaEnabled,
             notice = gemmaCrashCheck(),
@@ -503,6 +516,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun notify(text: String?) = _ui.update { it.copy(notice = text) }
 
+    // ---- GitHub (Claude with tools; every change needs the user's approval) ----
+    val githubToken: String get() = settings.githubToken
+    fun saveGitHubToken(token: String) {
+        settings.githubToken = token
+        _ui.update { it.copy(githubSet = token.isNotBlank()) }
+    }
+
+    private var approvalAnswer: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
+
+    /** Shows the change and waits for "Freigeben" (true) or "Ablehnen" (false). Stopping the answer counts as no. */
+    private suspend fun askApproval(title: String, details: String): Boolean {
+        val d = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        approvalAnswer = d
+        _ui.update { it.copy(approval = Approval(title, details)) }
+        return try { d.await() } finally {
+            approvalAnswer = null
+            _ui.update { it.copy(approval = null) }
+        }
+    }
+
+    fun answerApproval(ok: Boolean) { approvalAnswer?.complete(ok) }
+
+    /** GitHub task: Claude with the token's tools, if both keys are there. */
+    private fun isGitHubTask(prompt: String, history: List<ChatMessage>): Boolean {
+        if (settings.githubToken.isBlank() || settings.apiKey.isBlank()) return false
+        if (GITHUB_WORDS.containsMatchIn(prompt)) return true
+        // follow-ups ("ja, mach weiter") in a chat that already worked on GitHub
+        return history.takeLast(4).any { m ->
+            m.role == Role.ASSISTANT && listOf("✅ Freigegeben", "⛔ Abgelehnt", "🔎 Suche:", "📄 Lese ", "📁 ", "⚙️ Build-Status").any { m.text.contains(it) }
+        }
+    }
+
     fun saveSettings(apiKey: String, model: String, system: String) {
         settings.apiKey = apiKey
         settings.claudeModel = model
@@ -577,6 +622,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val localSystem = system + "\n" + de.foldki.app.data.MemoryStore.promptBlock(memory.all(), topics)
                 logSystem = if (engine == Engine.CLAUDE) system else localSystem
                 logHistory = history.size
+                if (isGitHubTask(prompt, history)) {
+                    // GitHub needs Claude (online) – Nano/Gemma cannot do this reliably.
+                    if (engine != Engine.CLAUDE) _ui.update { it.copy(notice = "GitHub-Aufgabe: Claude (online) übernimmt") }
+                    editMessage(conv.id, botMsg.id) { it.copy(engine = Engine.CLAUDE) }
+                    logSystem = system
+                    logHistory = history.size
+                    de.foldki.app.ai.GitHubAgent(settings.apiKey, settings.claudeModel, settings.githubToken).run(
+                        system = system, history = history.filterNot { it.localOnly },
+                        onText = { t -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + t) } },
+                        approve = { title, details -> askApproval(title, details) },
+                    )
+                    finished = true
+                    return@launch
+                }
                 val useGemma = engine == Engine.NANO && _ui.value.gemmaActive
                 val byGemma = useGemma && replyWithGemma(conv.id, botMsg.id, localSystem, history, web)
                 if (useGemma && !byGemma) de.foldki.app.data.DebugLog.write("Gemma nicht verfügbar (Laden/Timeout/Hitze) – Nano antwortet")
