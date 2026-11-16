@@ -108,7 +108,10 @@ Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
         val turns = history.filter { !it.isError }.takeLast(if (large) 12 else 6)
         val lines = turns.map { m ->
             val who = if (m.role == Role.USER) "Nutzer" else "Assistent"
-            "$who: ${m.text.take(if (large) 6000 else 1500)}"
+            // Own earlier answers short and without markers, so the model does not just repeat them.
+            val t = if (m.role == Role.USER) m.text.take(if (large) 6000 else 1500)
+                else de.foldki.app.export.DocumentParser.display(m.text).take(if (large) 1500 else 400)
+            "$who: $t"
         }.toMutableList()
         // Keep the prompt within the model's context: drop the oldest turns first.
         while (lines.size > 1 && lines.sumOf { it.length } > (if (large) 14000 else 3000)) lines.removeAt(0)
@@ -117,7 +120,8 @@ Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
         val docs = StringBuilder()
         // With web results in the prompt, documents get less room so Nano's small input limit is not exceeded.
         var budget = if (large) (if (web.isNotBlank()) 16000 else 24000) else if (web.isNotBlank()) 2500 else 4500
-        history.asReversed().flatMap { it.attachments }.forEach { a ->
+        // Only files from the last 3 questions: older attachments must not take over every answer.
+        history.filter { it.role == Role.USER }.takeLast(3).asReversed().flatMap { it.attachments }.forEach { a ->
             if (budget <= 0 || a.text.isBlank()) return@forEach
             val t = a.text.take(budget)
             budget -= t.length

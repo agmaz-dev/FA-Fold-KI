@@ -3,6 +3,8 @@ package de.foldki.app.ai
 import android.content.Context
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
@@ -83,9 +85,57 @@ class GemmaEngine(context: Context) {
             val terms = NanoEngine.firstLineTerms(complete(e, NanoEngine.searchTermsPrompt(question)))
             web = WebLookup.search(terms.ifBlank { question.take(100) })
         }
-        val prompt = NanoEngine.buildPrompt(system, history, web, large = true)
-        stream(e, prompt).collect { emit(it) }
+        // Real chat format (like ChatGPT/Jarvis): instruction as system, earlier turns as real messages,
+        // the question as its own message. Small models otherwise copy their old answers from one text block.
+        val turns = history.filter { !it.isError && it.text.isNotBlank() }
+        val last = turns.lastOrNull { it.role == Role.USER } ?: return@flow
+        val earlier = turns.subList(0, turns.lastIndexOf(last)).takeLast(10).dropWhile { it.role != Role.USER }
+        val sys = buildString {
+            append(system.trim())
+            val docs = recentDocs(history)
+            if (docs.isNotBlank()) append("\n\nInhalt der angehängten Dateien:\n").append(docs)
+            if (web.isNotBlank()) append("\n\nErgebnisse einer Internetsuche (nutze sie, nenne die Quelle):\n").append(web.take(6000))
+        }
+        val initial = earlier.map { m ->
+            val t = de.foldki.app.export.DocumentParser.display(m.text).take(2000)
+            if (m.role == Role.USER) Message.user(t) else Message.model(t)
+        }
+        chat(e, sys, initial, last.text).collect { emit(it) }
     }
+
+    /** Text of files from the last 3 questions only (older attachments do not take over every answer). */
+    private fun recentDocs(history: List<ChatMessage>): String {
+        val recentUser = history.filter { it.role == Role.USER }.takeLast(3)
+        val sb = StringBuilder()
+        var budget = 16000
+        recentUser.asReversed().flatMap { it.attachments }.forEach { a ->
+            if (budget <= 0 || a.text.isBlank()) return@forEach
+            val t = a.text.take(budget); budget -= t.length
+            sb.append("--- ").append(a.name).append(" ---\n").append(t).append("\n\n")
+        }
+        return sb.toString()
+    }
+
+    private fun chat(e: Engine, system: String, initial: List<Message>, question: String): Flow<String> = flow {
+        val conv = e.createConversation(
+            ConversationConfig(
+                systemInstruction = Contents.of(system),
+                initialMessages = initial,
+                samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.8),
+            ),
+        )
+        var done = false
+        try {
+            conv.sendMessageAsync(question).collect { m ->
+                val t = m.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
+                if (t.isNotEmpty()) emit(t)
+            }
+            done = true
+        } finally {
+            if (!done) runCatching { conv.cancelProcess() }
+            runCatching { conv.close() }
+        }
+    }.flowOn(Dispatchers.Default)
 
     private fun stream(e: Engine, prompt: String): Flow<String> = flow {
         val conv = e.createConversation(ConversationConfig(samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7)))
