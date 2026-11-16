@@ -95,6 +95,22 @@ fun GemmaSettings(vm: ChatViewModel, ui: UiState) {
             Spacer(Modifier.width(8.dp))
             Switch(checked = ui.gemmaEnabled, onCheckedChange = null, enabled = st is State.Ready)
         }
+        var cpu by remember { mutableStateOf(vm.settings.gemmaBackend == "CPU") }
+        Row(
+            Modifier.fillMaxWidth().heightIn(min = 56.dp)
+                .toggleable(value = cpu, role = Role.Switch) { cpu = it; vm.setGemmaCpu(it) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Gemma auf CPU rechnen", fontSize = 15.sp)
+                Text(
+                    if (cpu) "An: langsamer, Ergebnisse evtl. genauer" else "Aus: Grafikchip (GPU), schneller",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Switch(checked = cpu, onCheckedChange = null)
+        }
         if (vm.settings.gemmaCrashCount > 0) Text(
             "Gemma hat die App ${vm.settings.gemmaCrashCount}× beendet und wurde ausgeschaltet. Beim nächsten Versuch wird die CPU benutzt.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.error,

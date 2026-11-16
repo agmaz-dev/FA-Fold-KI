@@ -180,6 +180,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun downloadGemma() = models.download()
 
+    /** Test switch: Gemma on the CPU instead of the GPU (slower; GPU results can be inexact on some devices). */
+    fun setGemmaCpu(cpu: Boolean) {
+        if (gemmaGenerating) stop()
+        settings.gemmaBackend = if (cpu) "CPU" else "GPU"
+        gemma.close() // next answer loads with the chosen backend
+        de.foldki.app.data.DebugLog.write("Gemma-Rechenart umgestellt auf ${settings.gemmaBackend}")
+    }
+
     // ---- Long-term memory (on-device only) ----
     val memory = de.foldki.app.data.MemoryStore(app)
     private val _memories = MutableStateFlow(memory.all())

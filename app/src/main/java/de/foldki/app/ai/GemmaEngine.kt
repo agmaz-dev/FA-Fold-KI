@@ -128,15 +128,20 @@ class GemmaEngine(context: Context) {
             ),
         )
         var done = false
+        val pieces = ArrayList<String>() // for the error report: exactly what Gemma delivers
         try {
             conv.sendMessageAsync(question).collect { m ->
                 val t = m.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text }
-                if (t.isNotEmpty()) emit(t)
+                if (t.isNotEmpty()) { if (pieces.size < 60) pieces += t; emit(t) }
             }
             done = true
         } finally {
             if (!done) runCatching { conv.cancelProcess() }
             runCatching { conv.close() }
+            de.foldki.app.data.DebugLog.write(
+                "Gemma Rohteile (" + backendUsed + ", " + (if (precise) "genau" else "locker") + "): " +
+                    pieces.joinToString("|") { it.replace("\n", "⏎") }.take(1500),
+            )
         }
     }.flowOn(Dispatchers.Default)
 
