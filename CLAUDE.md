@@ -15,3 +15,10 @@
 
 ## Allgemein
 - Antworten und App-Texte auf Deutsch.
+
+## On-Device-Funktionen (ab 2.0)
+- **Gemini Nano ist immer Standard und Ersatz.** Gemma 4 E2B (`ai/GemmaEngine.kt`, `ai/LocalModelManager.kt`, LiteRT-LM) ist optional: einmaliger Download (~2,6 GB, SHA-256 geprüft), danach offline. Bei Fehler/Timeout/Hitze/Absturz → automatisch Nano. Keine weiteren Netzwerkzugriffe einbauen.
+- Tagesstart (`brief/`): Kalender, aktive Benachrichtigungen, offene Punkte – nur lokal mit Nano, nie an Claude (`ChatMessage.localOnly`).
+- Briefe: `export/LetterMeta.kt` (Datum/Empfänger/Zeichen/Betreff aus Seite 1), Absenderprofile `data/SenderProfile.kt` + Unterschrift `data/SignatureStore.kt`, PDF-Vorschau `ui/PdfPreview.kt` (öffnet sich nach jedem Brief).
+- Einstellungen = aufklappbare Karten (`ui/SettingsScreen.kt`). Aufgeklappt: Trennwand-Knopf oben links in der Chat-Leiste (`SplitPaneState.toggleFirst`).
+- Tests: `./gradlew testReleaseUnitTest` (LetterMeta, DocumentParser, SenderProfile, TaskExtractor).
