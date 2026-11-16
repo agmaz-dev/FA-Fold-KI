@@ -629,18 +629,27 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val original = _ui.value.conversations.firstOrNull { it.id == convId }?.messages
             ?.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }?.attachments?.lastOrNull()
         val facts = original?.analysis?.let { de.foldki.app.export.LetterAnalysis.parse(it) }
-        val fixed = de.foldki.app.export.LetterAnalysis.fixPlaceholders(rawDoc, original?.docDate, original?.refNo ?: facts?.reference, facts?.amount, facts?.deadline, facts?.contact)
+        val ref = original?.refNo ?: facts?.reference
+        val fixed = de.foldki.app.export.LetterAnalysis.repairNumbers(
+            de.foldki.app.export.LetterAnalysis.fixPlaceholders(rawDoc, original?.docDate, ref, facts?.amount, facts?.deadline, facts?.contact),
+            amount = facts?.amount,
+            dates = listOfNotNull(original?.docDate ?: facts?.date?.ifBlank { null }, facts?.deadlineDate?.ifBlank { null }, today()),
+            reference = ref,
+        )
+        val recipient = de.foldki.app.export.LetterMeta.completeRecipient(
+            original?.recipient ?: facts?.sender?.ifBlank { null }, original?.text.orEmpty(), facts?.sender,
+        )
         val profile = settings.activeSender
         // Like FA-PDF: the model wrote subject + body, the app sets the letter head and the name.
         val doc = de.foldki.app.export.LetterAnalysis.assemble(
             fixed,
             sender = profile?.toLegacyText()?.ifBlank { null },
-            recipient = original?.recipient ?: facts?.sender?.ifBlank { null },
+            recipient = recipient,
             placeDate = listOfNotNull(profile?.city?.ifBlank { null }, today()).joinToString(", "),
             name = profile?.name?.ifBlank { null },
             refs = listOfNotNull(
                 original?.docDate?.ifBlank { null }?.let { "Ihr Schreiben vom: $it" },
-                (original?.refNo ?: facts?.reference)?.ifBlank { null }?.let { "Ihr Zeichen: $it" },
+                de.foldki.app.export.LetterAnalysis.cleanRef(ref).ifBlank { null }?.let { "Ihr Zeichen: $it" },
             ),
         )
         if (doc != rawDoc) editMessage(convId, msgId) { it.copy(text = it.text.replace(rawDoc, doc)) }

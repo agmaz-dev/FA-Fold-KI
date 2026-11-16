@@ -187,6 +187,11 @@ object LetterAnalysis {
         // the name under the closing is set by the app
         if (!name.isNullOrBlank()) body = body.lines().dropLastWhile { it.isBlank() || it.trim().equals(name.trim(), true) }.joinToString("\n")
         body = completeEnding(body)
+        // DIN 5008: one empty line after the salutation
+        body = body.lines().let { ls ->
+            val i = ls.indexOfFirst { SALUTATION.containsMatchIn(it) }
+            if (i >= 0 && i + 1 < ls.size && ls[i + 1].isNotBlank()) (ls.subList(0, i + 1) + "" + ls.subList(i + 1, ls.size)).joinToString("\n") else body
+        }
         return buildString {
             sender?.trim()?.takeIf { it.isNotEmpty() }?.let { append(it).append("\n\n") }
             recipient?.trim()?.takeIf { it.isNotEmpty() }?.let { append(it).append("\n\n") }
@@ -196,6 +201,64 @@ object LetterAnalysis {
             append(body)
             if (!name.isNullOrBlank()) append("\n\n").append(name.trim())
         }
+    }
+
+    /** Only the number of a reference ("Zeichen 4711230 und Datum …" → "4711230"); empty if there is none. */
+    fun cleanRef(r: String?): String {
+        val t = r?.substringAfter(":")?.trim().orEmpty().ifBlank { r.orEmpty() }
+        return Regex("[A-Za-z0-9][A-Za-z0-9./\\-]*\\d[A-Za-z0-9./\\-]*").find(t)?.value?.trimEnd('.', '-', '/').orEmpty()
+    }
+
+    private fun lev(a: String, b: String): Int {
+        val d = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            var prev = d[0]; d[0] = i
+            for (j in 1..b.length) {
+                val tmp = d[j]
+                d[j] = minOf(d[j] + 1, d[j - 1] + 1, prev + if (a[i - 1] == b[j - 1]) 0 else 1)
+                prev = tmp
+            }
+        }
+        return d[b.length]
+    }
+
+    private val VALID_DATE = Regex("^(0?[1-9]|[12]\\d|3[01])\\.(0?[1-9]|1[0-2])\\.(\\d{4})$")
+
+    /**
+     * Small models garble numbers ("5770 Euro", "16.1112626", "47112330"). The app knows the right values from the
+     * read letter and puts them back: amounts in euro, broken dates (matched by day) and the reference number.
+     */
+    fun repairNumbers(t: String, amount: String?, dates: List<String>, reference: String?): String {
+        var out = t
+        // amount: "57,00 Euro" -> every euro amount whose digits start like the right one, but are not it
+        val a = amount?.let { Regex("\\d[\\d.]*(,\\d{1,2})?").find(it)?.value }
+        if (!a.isNullOrBlank()) {
+            val right = if (a.contains(",")) a.substringBefore(",") + "," + a.substringAfter(",").padEnd(2, '0') else "$a,00"
+            val intDigits = right.substringBefore(",").filter { it.isDigit() }
+            out = Regex("(?<![\\d,.])(\\d[\\d.,]*\\d|\\d)(\\s*)(Euro|EUR|€)").replace(out) { m ->
+                val digits = m.groupValues[1].filter { it.isDigit() }
+                val same = m.groupValues[1] == right || m.groupValues[1] == right.substringBefore(",")
+                if (!same && digits.startsWith(intDigits) && digits.length <= intDigits.length + 4) right + " " + m.groupValues[3] else m.value
+            }
+        }
+        // dates: tokens like 16.1112626 / 12.08.202026 / 12.8.20.26 that are no valid date -> known date with the same day
+        val known = dates.filter { VALID_DATE.matches(it) }
+        if (known.isNotEmpty()) {
+            out = Regex("(?<![\\d.])(\\d{1,2})\\.(\\d[\\d.]{2,}\\d)(?![\\d])").replace(out) { m ->
+                if (VALID_DATE.matches(m.value)) return@replace m.value
+                val day = m.groupValues[1].toInt()
+                val rest = m.groupValues[2].filter { it.isDigit() }
+                known.firstOrNull { k ->
+                    val p = k.split("."); p[0].toInt() == day && rest.trimStart('0').startsWith(p[1].toInt().toString())
+                } ?: known.firstOrNull { it.split(".")[0].toInt() == day } ?: m.value
+            }
+        }
+        // reference number: digit runs close to the right one (1–2 typos) become the right one
+        val ref = cleanRef(reference)
+        if (ref.length >= 5 && ref.all { it.isDigit() }) {
+            out = Regex("(?<!\\d)\\d{5,}(?!\\d)").replace(out) { m -> if (m.value != ref && lev(m.value, ref) <= 2) ref else m.value }
+        }
+        return out
     }
 
     /** Key to remember the sender profile used for a recipient (first line, letters/digits only). */

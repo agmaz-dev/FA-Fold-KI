@@ -152,7 +152,7 @@ object LetterLayout {
         contact.forEach { info(it.label, it.value) }
         iy += 8f
         info("Ihr Schreiben", letter.theirDate)
-        info("Ihr Zeichen", letter.reference.take(40))
+        info("Ihr Zeichen", LetterAnalysis.cleanRef(letter.reference).ifBlank { letter.reference }.take(40))
         info("Datum", dateOnly(letter.placeDate))
 
         // Subject below both blocks

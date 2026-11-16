@@ -158,6 +158,21 @@ object LetterMeta {
         return head.take(8).map { it.trim() }.firstOrNull { it.isNotEmpty() && ORG.containsMatchIn(it) && !isOwn(it) && !FOOTER.containsMatchIn(it) && it.length <= 60 }
     }
 
+    /**
+     * The read address may start with the street (name line lost). Then the name is put in front:
+     * from the analysis ([nameHint], first line) or from an authority/company line at the top of the letter.
+     */
+    fun completeRecipient(recipient: String?, letterText: String, nameHint: String?): String? {
+        val r = recipient?.trim()?.takeIf { it.isNotEmpty() } ?: return nameHint?.trim()?.ifBlank { null }
+        val first = r.lines().first().trim()
+        val isAddressLine = STREET.containsMatchIn(first) || ZIP_CITY.containsMatchIn(first)
+        if (!isAddressLine) return r
+        fun ok(s: String) = s.isNotBlank() && !STREET.containsMatchIn(s) && !ZIP_CITY.containsMatchIn(s) && !FOOTER.containsMatchIn(s) && s.length <= 60
+        val name = nameHint?.lines()?.firstOrNull()?.trim()?.takeIf { ok(it) }
+            ?: letterText.lines().take(30).map { it.trim() }.firstOrNull { ok(it) && ORG.containsMatchIn(it) }
+        return if (name != null) "$name\n$r" else r
+    }
+
     private val REF = Regex(
         "^(.*?\\b)?(aktenzeichen|az\\.|geschäftszeichen|unser zeichen|ihr zeichen|kassenzeichen|vorgangsnummer|kundennummer|vertragsnummer|" +
             "steuernummer|versicherungsnummer|bg-nummer|nummer der bedarfsgemeinschaft|rechnungsnummer|mitgliedsnummer|personalnummer)\\s*[:.]?\\s*([A-Za-z0-9][A-Za-z0-9 ./\\-]{1,40})",
