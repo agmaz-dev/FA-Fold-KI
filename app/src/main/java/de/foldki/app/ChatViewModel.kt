@@ -174,6 +174,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE }.getOrDefault(false)
 
     fun downloadGemma() = models.download()
+
+    // ---- Long-term memory (on-device only) ----
+    val memory = de.foldki.app.data.MemoryStore(app)
+    private val _memories = MutableStateFlow(memory.all())
+    val memories: StateFlow<List<String>> = _memories.asStateFlow()
+    fun addMemory(fact: String) { memory.add(fact); _memories.value = memory.all() }
+    fun removeMemory(index: Int) { memory.remove(index); _memories.value = memory.all() }
     fun cancelGemma() = models.cancel()
     fun deleteGemma() {
         if (gemmaGenerating) stop()
@@ -529,6 +536,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true
         val sentDoc = pendingFiles.isNotEmpty() && !wantsLetter
+        // Long-term memory: "Merk dir …", "Ich heiße …" etc. are kept on the phone for all later chats.
+        val learned = de.foldki.app.data.MemoryStore.factsIn(prompt).filter { memory.add(it) }
+        if (learned.isNotEmpty()) {
+            _memories.value = memory.all()
+            _ui.update { it.copy(notice = "Gemerkt: ${learned.joinToString("; ")}") }
+        }
         var finished = false
         job = viewModelScope.launch {
             try {
@@ -538,12 +551,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null, history = history) +
                     (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
                     (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
+                // On-device models also get the memory and the topics of the last chats (never sent to Claude).
+                val topics = _ui.value.conversations.filter { it.id != conv.id }.take(5).map { it.title }.filter { it.isNotBlank() }
+                val localSystem = system + "\n" + de.foldki.app.data.MemoryStore.promptBlock(memory.all(), topics)
                 val useGemma = engine == Engine.NANO && _ui.value.gemmaActive
-                val byGemma = useGemma && replyWithGemma(conv.id, botMsg.id, system, history, web)
+                val byGemma = useGemma && replyWithGemma(conv.id, botMsg.id, localSystem, history, web)
                 if (!byGemma) {
                     if (useGemma) _ui.update { it.copy(notice = "Gemma nicht verfügbar – Antwort von Nano") }
                     val flow = when (engine) {
-                        Engine.NANO, Engine.GEMMA -> nano.reply(system, history, web)
+                        Engine.NANO, Engine.GEMMA -> nano.reply(localSystem, history, web)
                         Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history.filterNot { it.localOnly }, web)
                     }
                     flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }

@@ -171,6 +171,26 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                         )
                         TextButton(onClick = { system = Settings.DEFAULT_SYSTEM }) { Text("Auf Standard zurücksetzen") }
                     }
+                    val mem by vm.memories.collectAsStateWithLifecycle()
+                    Card("memory", Icons.Default.Tune, "Gedächtnis", if (mem.isEmpty()) "Noch nichts gemerkt" else "${mem.size} Einträge") {
+                        Text(
+                            "Was die KI über dich weiß – gilt in allen Chats (nur Nano/Gemma, bleibt auf dem Handy). " +
+                                "Sag im Chat z. B. „Merk dir: …“ oder „Ich heiße …“.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        mem.forEachIndexed { i, f ->
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("• $f", fontSize = 14.sp, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { vm.removeMemory(i) }) { Text("Löschen") }
+                            }
+                        }
+                        var newFact by remember { mutableStateOf("") }
+                        OutlinedTextField(
+                            value = newFact, onValueChange = { newFact = it },
+                            label = { Text("Selbst hinzufügen") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        )
+                        TextButton(onClick = { vm.addMemory(newFact); newFact = "" }, enabled = newFact.isNotBlank()) { Text("Merken") }
+                    }
                     Spacer(Modifier.height(24.dp))
                 }
                 }
