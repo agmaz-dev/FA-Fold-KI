@@ -101,6 +101,8 @@ dependencies {
     implementation("androidx.window:window:1.5.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM unit tests (android.jar only has stubs)
+    testImplementation("org.json:json:20240303")
 }
 
 // Run the JVM unit tests (e.g. DocumentParser) in every CI build without touching the workflow.

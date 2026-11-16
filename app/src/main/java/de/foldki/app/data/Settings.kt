@@ -106,6 +106,34 @@ class Settings(context: Context) {
         get() = prefs.getString("last_brief_date", "") ?: ""
         set(v) = prefs.edit().putString("last_brief_date", v).apply()
 
+    /**
+     * Sender profiles for letters (JSON in "sender_profiles"). The first access migrates the old
+     * free-text [sender] into a first profile "Privat" (nothing is lost).
+     */
+    var senderProfiles: List<SenderProfile>
+        get() {
+            val raw = prefs.getString("sender_profiles", null)
+            if (raw != null) return SenderProfile.listFromJson(raw)
+            val old = sender
+            val list = if (old.isBlank()) emptyList() else listOf(SenderProfile.fromLegacy(old))
+            prefs.edit().putString("sender_profiles", SenderProfile.listToJson(list))
+                .putString("active_sender_id", list.firstOrNull()?.id ?: "").apply()
+            return list
+        }
+        set(v) { prefs.edit().putString("sender_profiles", SenderProfile.listToJson(v)).apply(); syncLegacySender() }
+
+    var activeSenderId: String
+        get() = prefs.getString("active_sender_id", "") ?: ""
+        set(v) { prefs.edit().putString("active_sender_id", v).apply(); syncLegacySender() }
+
+    val activeSender: SenderProfile?
+        get() = senderProfiles.let { list -> list.firstOrNull { it.id == activeSenderId } ?: list.firstOrNull() }
+
+    /** Keeps the old key "sender" equal to the active profile (older versions read it). */
+    private fun syncLegacySender() {
+        prefs.edit().putString("sender", activeSender?.toLegacyText().orEmpty()).apply()
+    }
+
     companion object {
         const val DEFAULT_MODEL = "claude-opus-5-5"
         val MODELS = listOf(
@@ -162,6 +190,12 @@ Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.).
 4. Erfinde nichts. Steht bei "Datum des angehängten Schreibens" oder "Empfänger (aus dem Originalschreiben)" "unbekannt" und hat der Nutzer es auch im Gespräch nicht genannt, schreibe noch keinen Brief. Stelle stattdessen nur eine einzige kurze Frage nach dem Fehlenden, z. B. "Von welchem Datum ist das Schreiben, und an wen geht die Antwort?". Hat der Nutzer es genannt, nimm seine Angabe.
 5. Andere fehlende Angaben markierst du mit [eckigen Klammern], z. B. [Aktenzeichen].
 6. Nach ---ENDE--- schreibst du einen sachlichen Satz, worauf du dich stützt."""
+
+        /** Added to letters when a sender profile is active. */
+        const val SENDER_RULES = """
+Absender: Übernimm den Block "Absender (aktiv)" genau so, nichts weglassen, nichts erfinden, nichts ändern.
+In förmlichen Briefen (Anrede "Sehr geehrte …") steht nach der Datumszeile und vor dem Betreff die Zeile "Unser Zeichen: " mit den Initialen. In lockeren Briefen (Anrede "Hallo", "Liebe …") gibt es diese Zeile nicht.
+Unter die Grußformel schreibst du nur den Namen; die Unterschrift setzt die App selbst ein."""
 
         /** Always added (also with a custom prompt): documents go between fixed markers, so PDF export gets only the document. */
         const val DOCUMENT_MARKER_RULE = """

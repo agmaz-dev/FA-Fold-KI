@@ -61,7 +61,8 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     var key by remember { mutableStateOf(vm.settings.apiKey) }
     var model by remember { mutableStateOf(vm.settings.claudeModel) }
     var system by remember { mutableStateOf(vm.settings.systemPrompt) }
-    var sender by remember { mutableStateOf(vm.settings.sender) }
+    // Sub-page: edit a sender profile (folded full screen, unfolded inside the left pane).
+    var editProfile by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
     var stVoice by remember { mutableStateOf(vm.settings.stVoice) }
     val stStatus by vm.stStatus.collectAsStateWithLifecycle()
@@ -69,8 +70,12 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     val stReady = stStatus == READY || vm.voice.isReady
 
     fun saveAndClose() {
-        vm.saveSettings(key, model, system); vm.saveSender(sender); vm.saveVoice(stVoice, rate)
+        vm.saveSettings(key, model, system); vm.saveVoice(stVoice, rate)
         onBack()
+    }
+    editProfile?.let { id ->
+        SenderProfileScreen(vm, id, onBack = { editProfile = null })
+        return
     }
     BackHandler { saveAndClose() }
     DisposableEffect(Unit) { onDispose { vm.voice.stopSpeaking() } }
@@ -139,15 +144,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
 
                     Section("Tagesstart (offline)") { BriefSettings(vm) }
 
-                    Section("Briefe") {
-                        OutlinedTextField(
-                            value = sender, onValueChange = { sender = it },
-                            label = { Text("Mein Absender") },
-                            placeholder = { Text("Vorname Nachname\nStraße Nr.\nPLZ Ort") },
-                            minLines = 3, modifier = Modifier.fillMaxWidth(),
-                        )
-                        Hint("Wird nur benutzt, wenn du einen Brief oder Widerspruch schreiben lässt.")
-                    }
+                    Section("Briefe – Absender") { SenderProfilesList(vm, onEdit = { editProfile = it }) }
 
                     Section("Persönlichkeit") {
                         OutlinedTextField(

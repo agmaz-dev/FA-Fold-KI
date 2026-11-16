@@ -136,4 +136,22 @@ class DocumentParserTest {
         val list = "Einkaufsliste\n• Milch\n• Brot"
         assertEquals(list, DocumentParser.ensureDateLine(list, "16.11.2026"))
     }
+
+    // ---- signature slot ----
+
+    @Test fun signatureSlotFindsClosingAndName() {
+        val slot = DocumentParser.signatureSlot(letter)!!
+        val lines = letter.lines()
+        assertEquals("Mit freundlichen Grüßen", lines[slot.closingLine])
+        assertEquals("Max Muster", lines[slot.nameLine])
+        val spaced = letter.replace("Grüßen\nMax", "Grüßen\n\nMax")
+        val s2 = DocumentParser.signatureSlot(spaced)!!
+        assertEquals("Max Muster", spaced.lines()[s2.nameLine])
+    }
+
+    @Test fun signatureSlotNoneWithoutLetterOrName() {
+        assertNull(DocumentParser.signatureSlot("Einkaufsliste\n• Milch"))
+        assertNull(DocumentParser.signatureSlot("Sehr geehrte Damen und Herren,\ntext\n\nMit freundlichen Grüßen"))
+        assertNull(DocumentParser.signatureSlot("Sehr geehrte Damen und Herren,\ntext\nMit freundlichen Grüßen\nAnlage: Bescheid"))
+    }
 }

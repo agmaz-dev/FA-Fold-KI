@@ -99,13 +99,13 @@ class Attachments(private val context: Context) {
     }
 
     /** Saves [text] as an A4 PDF in the chat attachments (used for letters the AI wrote). */
-    fun createPdf(text: String): Attachment {
+    fun createPdf(text: String, signature: Bitmap? = null): Attachment {
         val subject = text.lines().firstOrNull { it.trim().startsWith("Betreff", ignoreCase = true) }
             ?.substringAfter(":")?.trim()?.take(40)?.replace(Regex("[^A-Za-z0-9ÄÖÜäöüß _-]"), "")?.trim()
         val name = (subject?.ifBlank { null } ?: "Schreiben") + ".pdf"
         val id = UUID.randomUUID().toString()
         val file = File(dir, "$id.pdf")
-        file.outputStream().use { de.foldki.app.export.PdfExporter.write(text, it) }
+        file.outputStream().use { de.foldki.app.export.PdfExporter.write(text, it, signature) }
         return Attachment(id = id, name = name, mime = "application/pdf", path = file.absolutePath, text = "")
     }
 

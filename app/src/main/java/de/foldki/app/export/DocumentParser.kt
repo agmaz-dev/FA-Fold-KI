@@ -185,6 +185,23 @@ object DocumentParser {
         return lines.joinToString("\n")
     }
 
+    /** Where the signature goes: line of the closing formula and of the name below it. */
+    data class SignatureSlot(val closingLine: Int, val nameLine: Int)
+
+    /** Closing formula ("Mit freundlichen Grüßen") followed by a name line, in a letter; else null. */
+    fun signatureSlot(doc: String): SignatureSlot? {
+        val lines = doc.lines()
+        if (lines.none { SALUTATION.containsMatchIn(it) }) return null
+        val closing = lines.indexOfLast { CLOSING.matches(it) }
+        if (closing < 0) return null
+        var name = closing + 1
+        while (name < lines.size && lines[name].isBlank()) name++
+        if (name >= lines.size || name - closing > 4) return null
+        val n = lines[name].trim()
+        if (n.length > 60 || n.startsWith("Anlage", ignoreCase = true) || n.endsWith(".") && n.length > 30) return null
+        return SignatureSlot(closing, name)
+    }
+
     /** Text for the chat bubble: markers removed, Markdown cleaned. */
     fun display(text: String): String = clean(stripMarkers(text)).trim()
 

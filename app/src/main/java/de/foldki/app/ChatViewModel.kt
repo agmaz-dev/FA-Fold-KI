@@ -402,8 +402,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun notify(text: String?) = _ui.update { it.copy(notice = text) }
 
-    fun saveSender(sender: String) { settings.sender = sender }
-
     fun saveSettings(apiKey: String, model: String, system: String) {
         settings.apiKey = apiKey
         settings.claudeModel = model
@@ -496,12 +494,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val parts = DocumentParser.parse(msg.text)
         val doc = parts.document ?: return
         if (!parts.complete || !(wantsLetter || parts.isLetter)) return
-        val pdf = runCatching { attachments.createPdf(pdfText(doc)) }.getOrNull() ?: return
+        val pdf = runCatching { attachments.createPdf(pdfText(doc), activeSignature()) }.getOrNull() ?: return
         editMessage(convId, msgId) { it.copy(attachments = it.attachments + pdf) }
     }
 
     /** The user's own names (never taken as recipient of a reply). */
-    private fun ownNames(): List<String> = listOfNotNull(settings.sender.lines().firstOrNull()?.trim()?.takeIf { it.isNotEmpty() })
+    private fun ownNames(): List<String> = settings.senderProfiles.map { it.name.trim() }.filter { it.isNotEmpty() }
 
     private fun today(): String = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())
 
@@ -522,12 +520,59 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 original.refNo?.let { append("Zeichen des Originalschreibens: ").append(it).append("\n") }
                 original.subject?.let { append("Betreff des Originalschreibens: ").append(it).append("\n") }
             }
-            if (settings.sender.isNotBlank()) append("Absender des Nutzers:\n").append(settings.sender).append("\n")
+            settings.activeSender?.takeIf { it.toLegacyText().isNotBlank() }?.let {
+                append(de.foldki.app.data.SenderProfile.promptBlock(it)).append("\n")
+                append(Settings.SENDER_RULES).append("\n")
+            }
         }
     }
 
     /** Text that goes into a PDF: letters without a date line get today's date (safety net, no duplicates). */
-    fun pdfText(doc: String): String = DocumentParser.ensureDateLine(doc, today(), place = null)
+    fun pdfText(doc: String): String = DocumentParser.ensureDateLine(doc, today(), place = settings.activeSender?.city)
+
+    /** Signature of the active profile; always drawn into letter PDFs (never sent to any AI). */
+    fun activeSignature(): android.graphics.Bitmap? = settings.activeSender?.let { signatures.load(it.id) }
+
+    // ---- Sender profiles (letters) ----
+    val signatures = de.foldki.app.data.SignatureStore(app)
+    private val _profiles = MutableStateFlow(settings.senderProfiles to settings.activeSender?.id.orEmpty())
+    /** All profiles + id of the active one. */
+    val profiles: StateFlow<Pair<List<de.foldki.app.data.SenderProfile>, String>> = _profiles.asStateFlow()
+    private val _sigVersion = MutableStateFlow(0)
+    val sigVersion: StateFlow<Int> = _sigVersion.asStateFlow()
+
+    private fun publishProfiles() { _profiles.value = settings.senderProfiles to (settings.activeSender?.id.orEmpty()) }
+
+    fun addProfile(): de.foldki.app.data.SenderProfile {
+        val list = settings.senderProfiles
+        val p = de.foldki.app.data.SenderProfile(label = if (list.isEmpty()) "Privat" else "Profil ${list.size + 1}")
+        settings.senderProfiles = list + p
+        if (list.isEmpty()) settings.activeSenderId = p.id
+        publishProfiles()
+        return p
+    }
+
+    fun updateProfile(p: de.foldki.app.data.SenderProfile) {
+        settings.senderProfiles = settings.senderProfiles.map { if (it.id == p.id) p else it }
+        publishProfiles()
+    }
+
+    fun setActiveProfile(id: String) { settings.activeSenderId = id; publishProfiles() }
+
+    /** Deletes the profile and its signature image. */
+    fun deleteProfile(id: String) {
+        val rest = settings.senderProfiles.filterNot { it.id == id }
+        settings.senderProfiles = rest
+        if (settings.activeSenderId == id) settings.activeSenderId = rest.firstOrNull()?.id.orEmpty()
+        signatures.delete(id)
+        _sigVersion.value++
+        publishProfiles()
+    }
+
+    fun saveSignature(id: String, drawn: android.graphics.Bitmap): Boolean =
+        signatures.save(id, drawn).also { _sigVersion.value++; notify(if (it) "Unterschrift gespeichert" else "Keine Unterschrift erkannt") }
+
+    fun deleteSignature(id: String) { signatures.delete(id); _sigVersion.value++ }
 
     private fun editMessage(convId: String, msgId: String, f: (ChatMessage) -> ChatMessage) {
         _ui.update { s ->

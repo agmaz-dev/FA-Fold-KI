@@ -355,7 +355,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
     val savePdf = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         if (uri != null) {
             runCatching {
-                context.contentResolver.openOutputStream(uri)!!.use { PdfExporter.write(pdfText, it) }
+                context.contentResolver.openOutputStream(uri)!!.use { PdfExporter.write(pdfText, it, vm.activeSignature()) }
             }.onSuccess { vm.notify("PDF gespeichert") }
                 .onFailure { vm.notify("PDF konnte nicht gespeichert werden: ${it.message}") }
         }
@@ -368,7 +368,7 @@ private fun ChatScreen(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu
         },
         savePdf = { text -> pdfText = vm.pdfText(text); savePdf.launch(pdfName(text)) },
         sharePdf = { text ->
-            runCatching { PdfExporter.share(context, vm.pdfText(text), pdfName(text)) }
+            runCatching { PdfExporter.share(context, vm.pdfText(text), pdfName(text), vm.activeSignature()) }
                 .onFailure { vm.notify("Teilen fehlgeschlagen: ${it.message}") }
         },
         speak = { id, text ->
