@@ -61,6 +61,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -188,29 +190,52 @@ private fun PdfPages(file: File, listState: androidx.compose.foundation.lazy.Laz
 
     var scale by remember(file) { mutableFloatStateOf(1f) }
     var offsetX by remember(file) { mutableFloatStateOf(0f) }
+    var offsetY by remember(file) { mutableFloatStateOf(0f) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val widthPx = with(density) { (maxWidth - 24.dp).toPx() }.toInt().coerceIn(200, 1400)
-        val maxShift = with(density) { maxWidth.toPx() }
+        val viewW = with(density) { maxWidth.toPx() }
+        val viewH = with(density) { maxHeight.toPx() }
+        // Zoom exactly where the fingers are (focal point), not only into the middle; the zoomed page can be moved everywhere.
+        fun zoomAt(cx: Float, cy: Float, newScale: Float, panX: Float = 0f, panY: Float = 0f) {
+            val ns = newScale.coerceIn(1f, 5f)
+            val f = ns / scale
+            offsetX = ((cx - (cx - offsetX) * f) + panX).coerceIn(viewW - viewW * ns, 0f)
+            offsetY = ((cy - (cy - offsetY) * f) + panY).coerceIn(viewH - viewH * ns, 0f)
+            scale = ns
+            if (ns == 1f) { offsetX = 0f; offsetY = 0f }
+        }
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize()
-                // Pinch with two fingers zooms (1–4×) and moves sideways; one finger keeps scrolling the pages.
+                // Two fingers: zoom (1–5×) around the point between the fingers and move in all directions.
+                // One finger: scrolls the pages; when zoomed it also moves sideways.
                 .pointerInput(file) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         do {
                             val event = awaitPointerEvent()
-                            if (event.changes.count { it.pressed } >= 2) {
-                                scale = (scale * event.calculateZoom()).coerceIn(1f, 4f)
-                                val limit = maxShift * (scale - 1f) / 2f
-                                offsetX = if (scale == 1f) 0f else (offsetX + event.calculatePan().x).coerceIn(-limit, limit)
+                            val pressed = event.changes.count { it.pressed }
+                            if (pressed >= 2) {
+                                val c = event.calculateCentroid(useCurrent = true)
+                                val pan = event.calculatePan()
+                                zoomAt(c.x, c.y, scale * event.calculateZoom(), pan.x, pan.y)
                                 event.changes.forEach { it.consume() }
+                            } else if (pressed == 1 && scale > 1f) {
+                                val pan = event.calculatePan()
+                                offsetX = (offsetX + pan.x).coerceIn(viewW - viewW * scale, 0f)
                             }
                         } while (event.changes.any { it.pressed })
                     }
                 }
-                .graphicsLayer { scaleX = scale; scaleY = scale; translationX = offsetX },
+                // Double tap: zoom in at that spot (2.5×), double tap again: back to normal.
+                .pointerInput(file) {
+                    detectTapGestures(onDoubleTap = { p -> if (scale > 1f) zoomAt(p.x, p.y, 1f) else zoomAt(p.x, p.y, 2.5f) })
+                }
+                .graphicsLayer {
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
+                    scaleX = scale; scaleY = scale; translationX = offsetX; translationY = offsetY
+                },
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,

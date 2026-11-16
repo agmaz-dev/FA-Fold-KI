@@ -13,6 +13,9 @@
 ## Zielgerät
 - Zielgerät: Samsung Galaxy Z Fold 7. Jede Layout-Änderung und jeder Test gilt für beide Zustände: zugeklappt (schmales Außendisplay) und aufgeklappt (großes Display). Eingabefelder, Knöpfe und Abstände müssen auf dem Außendisplay funktionieren.
 
+## Zoom (gilt für jede Zoom-Funktion)
+- Zoomen immer dort, wo die Finger sind (Mittelpunkt zwischen den zwei Fingern), nicht nur in die Bildmitte. Gezoomt muss man überall hin schieben können (links, rechts, oben, unten). Doppeltipp zoomt an der getippten Stelle hinein bzw. wieder heraus. Referenz: `ui/PdfPreview.kt`.
+
 ## Allgemein
 - Antworten und App-Texte auf Deutsch.
 
