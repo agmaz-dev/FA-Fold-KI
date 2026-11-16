@@ -132,8 +132,18 @@ object LetterAnalysis {
      * Repairs the head of a letter written by a small model: a salutation above the subject is removed,
      * duplicate date lines are reduced to one, and a missing sender block / recipient address is added.
      */
+    /** Remarks to the user that a small model writes into the letter head ("Hier ist ein Entwurf …", "(nicht explizit genannt)"). */
+    private val REMARK = Regex(
+        "(entwurf|bitte beachte|rechtlichen rat|rechtsberatung|anpassen|nicht explizit|nicht genannt|nicht angegeben|unbekannt|" +
+            "^\\s*(hier (ist|kommt|folgt)|gerne|klar|natürlich|okay)\\b)",
+        RegexOption.IGNORE_CASE,
+    )
+
     fun tidy(doc: String, sender: String?, recipient: String?): String {
         val lines = doc.lines().toMutableList()
+        // remarks above the salutation (letter head) are removed
+        val salIdx = lines.indexOfFirst { SALUTATION.containsMatchIn(it) }.let { if (it < 0) lines.size else it }
+        for (i in salIdx - 1 downTo 0) if (REMARK.containsMatchIn(lines[i])) lines.removeAt(i)
         val subj = lines.indexOfFirst { it.trim().startsWith("Betreff", true) }
         if (subj > 0 && lines.drop(subj + 1).any { SALUTATION.containsMatchIn(it) }) {
             // salutation(s) wrongly above the subject

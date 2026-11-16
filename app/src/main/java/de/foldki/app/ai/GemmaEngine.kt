@@ -100,7 +100,9 @@ class GemmaEngine(context: Context) {
             val t = de.foldki.app.export.DocumentParser.display(m.text).take(2000)
             if (m.role == Role.USER) Message.user(t) else Message.model(t)
         }
-        chat(e, sys, initial, last.text).collect { emit(it) }
+        // Letters/documents and reading a letter: low temperature = exact words and numbers. Normal talk stays lively.
+        val precise = system.contains("---DOKUMENT---") || system.contains("BRIEFDATUM:")
+        chat(e, sys, initial, last.text, precise).collect { emit(it) }
     }
 
     /** Text of files from the last 3 questions only (older attachments do not take over every answer). */
@@ -116,12 +118,13 @@ class GemmaEngine(context: Context) {
         return sb.toString()
     }
 
-    private fun chat(e: Engine, system: String, initial: List<Message>, question: String): Flow<String> = flow {
+    private fun chat(e: Engine, system: String, initial: List<Message>, question: String, precise: Boolean = false): Flow<String> = flow {
         val conv = e.createConversation(
             ConversationConfig(
                 systemInstruction = Contents.of(system),
                 initialMessages = initial,
-                samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.8),
+                samplerConfig = if (precise) SamplerConfig(topK = 20, topP = 0.9, temperature = 0.2)
+                    else SamplerConfig(topK = 40, topP = 0.95, temperature = 0.8),
             ),
         )
         var done = false
