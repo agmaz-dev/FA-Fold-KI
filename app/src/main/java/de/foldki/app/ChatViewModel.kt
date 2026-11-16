@@ -235,8 +235,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             if (!gemma.isLoaded) {
                 val d = gemma.loadAsync(models.modelFile.absolutePath, settings.gemmaBackend == "GPU") { b -> settings.gemmaAttempt = b }
                 gemmaBegin(); d.invokeOnCompletion { gemmaEnd() } // stays guarded until the native load really ends
-                val backend = try { withTimeoutOrNull(60_000) { d.await() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { null }
-                    ?: return false
+                val backend = try { withTimeoutOrNull(60_000) { d.await() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) {
+                    de.foldki.app.data.DebugLog.write("Gemma Ladefehler: ${e.stackTraceToString().take(1500)}"); null
+                } ?: run { de.foldki.app.data.DebugLog.write("Gemma nicht geladen (Fehler oder > 60 s)"); return false }
+                de.foldki.app.data.DebugLog.write("Gemma geladen · Backend: $backend")
                 if (backend == "CPU" && settings.gemmaBackend == "GPU") settings.gemmaBackend = "CPU"
             }
             settings.gemmaAttempt = gemma.backendUsed ?: settings.gemmaBackend
@@ -543,6 +545,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(notice = "Gemerkt: ${learned.joinToString("; ")}") }
         }
         var finished = false
+        val t0 = System.currentTimeMillis()
+        var logSystem = ""
+        var logHistory = 0
+        var logError: String? = null
         job = viewModelScope.launch {
             try {
                 // Like FA-PDF: the AI reads a new letter once (date, sender, case number, deadline, suggestions).
@@ -554,8 +560,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // On-device models also get the memory and the topics of the last chats (never sent to Claude).
                 val topics = _ui.value.conversations.filter { it.id != conv.id }.take(5).map { it.title }.filter { it.isNotBlank() }
                 val localSystem = system + "\n" + de.foldki.app.data.MemoryStore.promptBlock(memory.all(), topics)
+                logSystem = if (engine == Engine.CLAUDE) system else localSystem
+                logHistory = history.size
                 val useGemma = engine == Engine.NANO && _ui.value.gemmaActive
                 val byGemma = useGemma && replyWithGemma(conv.id, botMsg.id, localSystem, history, web)
+                if (useGemma && !byGemma) de.foldki.app.data.DebugLog.write("Gemma nicht verfügbar (Laden/Timeout/Hitze) – Nano antwortet")
                 if (!byGemma) {
                     if (useGemma) _ui.update { it.copy(notice = "Gemma nicht verfügbar – Antwort von Nano") }
                     val flow = when (engine) {
@@ -568,6 +577,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                logError = e.stackTraceToString().take(2000)
                 editMessage(conv.id, botMsg.id) {
                     it.copy(
                         text = (if (it.text.isBlank()) "" else it.text + "\n\n") +
@@ -576,6 +586,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             } finally {
+                // Error report (stays on the phone until the user shares it)
+                val answer = _ui.value.conversations.firstOrNull { it.id == conv.id }?.messages?.firstOrNull { it.id == botMsg.id }
+                de.foldki.app.data.DebugLog.request(
+                    engine = (answer?.engine ?: engine).label + (if (voice) " · Sprachmodus" else "") + (if (web) " · Web" else "") +
+                        (if (!finished && logError == null) " · abgebrochen" else ""),
+                    system = logSystem, historyCount = logHistory, question = prompt, answer = answer?.text.orEmpty(),
+                    firstTokenMs = null, totalMs = System.currentTimeMillis() - t0, error = logError,
+                )
                 // No PDF from a half-written letter (stopped or failed).
                 if (finished) attachDocumentPdf(conv.id, botMsg.id, wantsLetter, openPreview = !voice)
                 // Only the still-current job may end "generating" (a stopped job must not end the next one).

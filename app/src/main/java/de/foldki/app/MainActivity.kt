@@ -13,6 +13,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        de.foldki.app.data.DebugLog.init(applicationContext)
         enableEdgeToEdge()
         setContent { FoldTheme { ChatApp(vm) } }
     }

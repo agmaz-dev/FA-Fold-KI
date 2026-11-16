@@ -191,6 +191,19 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                         )
                         TextButton(onClick = { vm.addMemory(newFact); newFact = "" }, enabled = newFact.isNotBlank()) { Text("Merken") }
                     }
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val version = remember {
+                        runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }.getOrNull() ?: "?"
+                    }
+                    Card("report", Icons.Default.Tune, "Fehlerbericht", "Version $version") {
+                        Text(
+                            "Zeigt dem Entwickler, was die KI bekommen und geantwortet hat, welches Modell lief und wo Fehler waren. " +
+                                "Bleibt auf dem Handy, bis du ihn teilst. Enthält deine Fragen und Antworten, aber keinen API-Schlüssel.",
+                            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(onClick = { runCatching { de.foldki.app.data.DebugLog.share(ctx, version) } }) { Text("Fehlerbericht teilen") }
+                        TextButton(onClick = { de.foldki.app.data.DebugLog.clear(); vm.notify("Fehlerbericht geleert") }) { Text("Bericht leeren") }
+                    }
                     Spacer(Modifier.height(24.dp))
                 }
                 }
