@@ -154,4 +154,13 @@ class DocumentParserTest {
         assertNull(DocumentParser.signatureSlot("Sehr geehrte Damen und Herren,\ntext\n\nMit freundlichen Grüßen"))
         assertNull(DocumentParser.signatureSlot("Sehr geehrte Damen und Herren,\ntext\nMit freundlichen Grüßen\nAnlage: Bescheid"))
     }
+
+    @Test fun echoedMarkersAreNoDocument() {
+        val p = DocumentParser.parse("Donnerstag heißt auf Türkisch Perşembe.\n\n---DOKUMENT---\nENDE")
+        assertNull(p.document)
+        assertEquals("Donnerstag heißt auf Türkisch Perşembe.", p.before)
+        val q = DocumentParser.parse("Antwort ohne Dokument.\n---ENDE---")
+        assertNull(q.document)
+        assertEquals("Antwort ohne Dokument.", q.before)
+    }
 }

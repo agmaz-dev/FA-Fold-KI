@@ -53,6 +53,9 @@ data class UiState(
 }
 
 /** Words that mean "please write me a letter". */
+/** Requests for a document other than a letter (list, summary, PDF …). */
+private val DOC_WORDS = Regex("pdf|dokument|liste|zusammenfassung|fass .* zusammen|protokoll|vertrag|lebenslauf|aufstellung|tabelle|notiz", RegexOption.IGNORE_CASE)
+
 private val LETTER_WORDS = Regex(
     "brief|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|" +
         "ein schreiben|das schreiben|formelles schreiben|schreib (ihm|ihr|ihnen|denen|zurück)|antworte (ihm|ihr|ihnen|denen|darauf)|" +
@@ -649,7 +652,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Letter rules only when the user actually asks for a letter – otherwise the AI talks normally. */
     private fun buildSystem(letter: Boolean, followUpDoc: Boolean, history: List<ChatMessage> = emptyList()): String = buildString {
         append(settings.systemPrompt).append("\n")
-        append(Settings.DOCUMENT_MARKER_RULE).append("\n")
+        // Marker rule only when a document is likely asked for: small models otherwise echo "---ENDE---" into normal answers.
+        val lastAsk = history.lastOrNull { it.role == Role.USER }?.text.orEmpty()
+        if (letter || followUpDoc || DOC_WORDS.containsMatchIn(lastAsk)) append(Settings.DOCUMENT_MARKER_RULE).append("\n")
         if (followUpDoc) append(Settings.DOCUMENT_FOLLOWUP_RULE).append("\n")
         append("Heutiges Datum: ").append(today()).append("\n")
         if (letter) {

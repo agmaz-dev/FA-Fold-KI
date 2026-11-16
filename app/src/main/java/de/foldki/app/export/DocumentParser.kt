@@ -45,6 +45,8 @@ object DocumentParser {
             val e = END.find(text, s.range.last + 1)
             val raw = text.substring(s.range.last + 1, e?.range?.first ?: text.length)
             val (doc, trailing) = tidy(raw)
+            // A small model sometimes only echoes the markers ("---DOKUMENT---" + "ENDE"): that is no document.
+            if (isTrivial(doc)) return fallback(stripMarkers(text))
             val after = listOf(trailing, e?.let { stripMarkers(text.substring(it.range.last + 1)) }.orEmpty())
                 .filter { it.isNotBlank() }.joinToString("\n\n")
             return Parts(
@@ -131,7 +133,15 @@ object DocumentParser {
     }
 
     private fun stripMarkers(text: String): String =
-        text.replace(START, "").replace(END, "").replace(Regex("\\n{3,}"), "\n\n")
+        text.replace(START, "").replace(END, "").replace(BARE_MARKER, "").replace(Regex("\\n{3,}"), "\n\n").trim()
+
+    /** Lines that are only the marker word, e.g. "ENDE" or "DOKUMENT" without dashes. */
+    private val BARE_MARKER = Regex("^[ \\t>#*_-]*(ENDE|DOKUMENT)[ \\t*_.-]*$\\n?", OPTS)
+
+    private fun isTrivial(doc: String): Boolean {
+        val t = doc.replace(BARE_MARKER, "").trim()
+        return t.length < 8
+    }
 
     /** Removes Markdown so documents look clean in the chat and in the PDF; list items stay readable as "• ". */
     fun clean(text: String): String = text.lines().joinToString("\n") { l ->
