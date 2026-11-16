@@ -174,6 +174,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         runCatching { power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE }.getOrDefault(false)
 
     fun downloadGemma() = models.download()
+
+    /** E2B (small, fast) or E4B (smarter). The loaded engine is closed so the next answer uses the chosen model. */
+    fun selectGemmaModel(id: String) {
+        if (gemmaGenerating) stop()
+        gemma.close()
+        models.select(id)
+    }
     fun cancelGemma() = models.cancel()
     fun deleteGemma() {
         if (gemmaGenerating) stop()

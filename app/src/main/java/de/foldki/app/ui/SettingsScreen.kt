@@ -134,7 +134,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                             }
                         }
                     }
-                    Card("gemma", Icons.Default.Memory, "Optionale On-Device-Modelle", gemmaSummary(ui)) { GemmaSettings(vm, ui) }
+                    Card("gemma", Icons.Default.Memory, "Optionale On-Device-Modelle", gemmaSummary(ui, vm.models.spec.label)) { GemmaSettings(vm, ui) }
                     Card("brief", Icons.Default.WbSunny, "Tagesstart (offline)", briefSummary(vm)) { BriefSettings(vm) }
                     Card("sender", Icons.Default.Draw, "Briefe – Absender", senderSummary(vm)) { SenderProfilesList(vm, onEdit = { editProfile = it }) }
                     Card("voice", Icons.Default.RecordVoiceOver, "Stimme – Tessa & Caleb", if (stReady) "Eingerichtet · " + (Supertonic.VOICES[stVoice]?.second ?: stVoice) else "Noch nicht eingerichtet") {
