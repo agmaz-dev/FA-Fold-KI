@@ -12,8 +12,8 @@ android {
         applicationId = "de.foldki.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.8"
+        versionCode = 15
+        versionName = "1.9"
         // Galaxy Z Fold7 and all current phones are 64-bit ARM; keeps the APK small.
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -88,6 +88,9 @@ dependencies {
 
     // Claude API (official Anthropic Java SDK)
     implementation("com.anthropic:anthropic-java:3.8.0")
+
+    // Fold/hinge position for the split view (on-device only)
+    implementation("androidx.window:window:1.5.1")
 
     testImplementation("junit:junit:4.13.2")
 }
