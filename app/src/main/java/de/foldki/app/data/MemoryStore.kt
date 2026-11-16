@@ -36,7 +36,7 @@ class MemoryStore(context: Context) {
         private val ABOUT_ME = Regex(
             "\\b(ich heiße|mein name ist|ich wohne|ich lebe in|ich komme aus|ich arbeite|ich bin von beruf|mein beruf|ich bin \\d+ jahre|" +
                 "ich habe (eine frau|einen mann|kinder|eine tochter|einen sohn)|meine frau|mein mann|meine tochter|mein sohn|ich mag|ich liebe|ich hasse|" +
-                "ich fahre|mein auto|mein geburtstag|ich spreche)\\b[^.!?\\n]{2,120}",
+                "ich fahre|mein auto|mein geburtstag|ich spreche)\\b[^.!?,\\n]{2,120}?(?=\\s+und\\s+(ich|mein|meine)\\b|[.!?,\\n]|$)",
             RegexOption.IGNORE_CASE,
         )
 
