@@ -190,6 +190,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** App in the background or memory is low: free Gemma's memory (it loads again on the next question). */
     fun onBackground() { if (!gemmaGenerating) gemma.close() }
 
+    /** Android is short of memory (app in the background): also free the speech recognition model. */
+    fun onLowMemory() { voice.trimMemory() }
+
     private fun gemmaBegin() { if (gemmaBusy.incrementAndGet() == 1) settings.gemmaLoading = true }
     private fun gemmaEnd() { if (gemmaBusy.decrementAndGet() <= 0) { gemmaBusy.set(0); settings.gemmaLoading = false } }
 
@@ -275,6 +278,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Called when the app comes to the foreground (from the launcher or another app). */
     fun onAppResumed() {
+        voice.prewarm() // speech input: model ready before the first tap
         if (!settings.dailyBriefEnabled || briefJob?.isActive == true) return
         val current = _brief.value
         if (current != null) { if (briefRetryAi) summarizeBrief(current); return }

@@ -134,7 +134,13 @@ class VoiceController(context: Context) {
 
     fun stopSpeaking() = supertonic.stop()
 
-    fun release() { stopAll() }
+    fun release() { stopAll(); whisper.release() }
+
+    /** Keeps Whisper loaded so the first dictation does not wait for the model (~250 MB RAM). */
+    fun prewarm() { if (whisper.isReady && !whisper.isLoaded) scope.launch { whisper.warmUp() } }
+
+    /** Android needs memory: free Whisper unless it is in use; it loads again when needed. */
+    fun trimMemory() { if (_listenPhase.value == ListenPhase.IDLE) whisper.release() }
 
     /** Pauses music (e.g. Spotify) while listening, like other assistant apps do. */
     private fun requestFocus() {
