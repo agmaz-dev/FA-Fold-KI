@@ -58,6 +58,23 @@ class NanoEngine {
         }
     }
 
+    /**
+     * Daily briefing: own short instruction, no chat history, no web, facts at most 3500 characters.
+     * BUSY is retried once after 2 s; other errors (e.g. BACKGROUND_USE_BLOCKED) go to the caller.
+     */
+    suspend fun brief(facts: String): String {
+        val prompt = BRIEF_SYSTEM + "\n\n" + facts.take(3500) + "\n\nTagesstart:"
+        return try {
+            complete(prompt)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (errorCode(e) != com.google.mlkit.genai.common.GenAiException.ErrorCode.BUSY) throw e
+            kotlinx.coroutines.delay(2000)
+            complete(prompt)
+        }.trim()
+    }
+
     private suspend fun complete(prompt: String): String {
         val sb = StringBuilder()
         model.generateContentStream(prompt).collect { sb.append(it.candidates.firstOrNull()?.text.orEmpty()) }
@@ -65,6 +82,20 @@ class NanoEngine {
     }
 
     companion object {
+    const val BRIEF_SYSTEM = """Du schreibst einen kurzen Tagesstart auf Deutsch für den Nutzer (duzen).
+Fasse nur die folgenden Fakten in 2 bis 4 kurzen Sätzen zusammen: was heute wichtig ist, welche Termine anstehen, wer geschrieben hat, was offen ist.
+Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
+
+    /** ML Kit GenAI error code somewhere in the cause chain, or null. */
+    fun errorCode(e: Throwable?): Int? {
+        var t = e
+        while (t != null) {
+            if (t is com.google.mlkit.genai.common.GenAiException) return t.errorCode
+            t = t.cause.takeIf { it !== t }
+        }
+        return null
+    }
+
     fun searchTermsPrompt(question: String) =
         "Gib nur 2 bis 5 Suchbegriffe (ohne Erklärung, eine Zeile) für eine Internetsuche zu dieser Frage aus:\n$question"
 

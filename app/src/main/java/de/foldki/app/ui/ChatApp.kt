@@ -132,6 +132,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ChatApp(vm: ChatViewModel) {
     val ui by vm.ui.collectAsStateWithLifecycle()
+    // Daily briefing: checked each time the app comes to the foreground (only 5–11 o'clock, once a day).
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) { vm.onAppResumed(); onPauseOrDispose { } }
     var showSettings by remember { mutableStateOf(false) }
 
     // Divider position for the unfolded layout, restored from the last session (stored on the device only).
@@ -284,8 +286,25 @@ private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: ()
 
 @Composable
 private fun EmptyState(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit) {
+    val brief by vm.brief.collectAsStateWithLifecycle()
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val maxCard = maxHeight * 0.45f // folded: the briefing never takes more than ~45 % of the cover screen
+        Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            brief?.let { b ->
+                BriefCard(
+                    b, onClose = vm::closeBrief, onOpenChat = vm::openBriefAsChat, onToggle = vm::toggleOpenItem,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp).widthIn(max = 680.dp).fillMaxWidth().heightIn(max = maxCard),
+                )
+            }
+            EmptyHello(ui, vm, onSettings, Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun EmptyHello(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, modifier: Modifier) {
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        modifier.fillMaxWidth().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {

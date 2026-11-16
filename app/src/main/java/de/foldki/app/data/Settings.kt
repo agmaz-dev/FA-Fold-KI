@@ -82,6 +82,30 @@ class Settings(context: Context) {
         get() = prefs.getInt("gemma_crash_count", 0)
         set(v) { prefs.edit().putInt("gemma_crash_count", v).commit() }
 
+    /** Daily briefing ("Tagesstart"), fixed window 5–11 o'clock. Off by default, the user switches it on. */
+    var dailyBriefEnabled: Boolean
+        get() = prefs.getBoolean("daily_brief", false)
+        set(v) = prefs.edit().putBoolean("daily_brief", v).apply()
+
+    var briefCalendar: Boolean
+        get() = prefs.getBoolean("brief_calendar", true)
+        set(v) = prefs.edit().putBoolean("brief_calendar", v).apply()
+
+    /** Only the notifications shown at the moment the app opens; nothing is stored. */
+    var briefNotifications: Boolean
+        get() = prefs.getBoolean("brief_notifications", true)
+        set(v) = prefs.edit().putBoolean("brief_notifications", v).apply()
+
+    /** Open items found by rules in the own chat messages of the last 7 days. */
+    var briefChats: Boolean
+        get() = prefs.getBoolean("brief_chats", true)
+        set(v) = prefs.edit().putBoolean("brief_chats", v).apply()
+
+    /** yyyy-MM-dd of the last shown briefing (once per day). */
+    var lastBriefDate: String
+        get() = prefs.getString("last_brief_date", "") ?: ""
+        set(v) = prefs.edit().putString("last_brief_date", v).apply()
+
     companion object {
         const val DEFAULT_MODEL = "claude-opus-5-5"
         val MODELS = listOf(

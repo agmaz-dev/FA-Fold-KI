@@ -264,6 +264,119 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         checkNano()
     }
 
+    // ---- Tagesstart (daily briefing), only on the device ----
+    private val openItems = de.foldki.app.brief.OpenItemsStore(app)
+    private val _brief = MutableStateFlow<de.foldki.app.brief.Briefing?>(null)
+    val brief: StateFlow<de.foldki.app.brief.Briefing?> = _brief.asStateFlow()
+    private var briefJob: Job? = null
+    /** Nano refused because the app was not in the foreground yet: try the summary again on the next open. */
+    private var briefRetryAi = false
+
+    /** Called when the app comes to the foreground (from the launcher or another app). */
+    fun onAppResumed() {
+        if (!settings.dailyBriefEnabled || briefJob?.isActive == true) return
+        val current = _brief.value
+        if (current != null) { if (briefRetryAi) summarizeBrief(current); return }
+        if (!de.foldki.app.brief.DailyBriefing.inWindow()) return
+        if (settings.lastBriefDate == de.foldki.app.brief.DailyBriefing.today()) return
+        startBrief()
+    }
+
+    /** "Heute erneut zeigen" in the settings: shows the briefing right away. */
+    fun showBriefAgain() {
+        if (!settings.dailyBriefEnabled) return
+        briefJob?.cancel(); _brief.value = null
+        newChat() // the card is shown on the empty chat page
+        startBrief()
+    }
+
+    private fun startBrief() {
+        val app = getApplication<Application>()
+        briefJob = viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val events = if (settings.briefCalendar) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                de.foldki.app.brief.CalendarSource.read(app, now)
+            } else emptyList()
+            val notifAccess = de.foldki.app.brief.NotificationCollector.isEnabled(app)
+            val notifs = if (settings.briefNotifications) de.foldki.app.brief.NotificationCollector.current(app) else emptyList()
+            val items = if (settings.briefChats) kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val msgs = _ui.value.conversations.flatMap { c ->
+                    c.messages.filter { it.role == Role.USER && !it.localOnly }.map { de.foldki.app.brief.TaskExtractor.Message(it.text, c.updatedAt) }
+                }
+                openItems.merge(de.foldki.app.brief.TaskExtractor.extract(msgs, now), now)
+            } else emptyList()
+            val b = de.foldki.app.brief.Briefing(
+                date = de.foldki.app.brief.DailyBriefing.dateLabel(now),
+                events = events, notifications = notifs, openItems = items,
+                loading = true, notificationsAllowed = !settings.briefNotifications || notifAccess,
+            )
+            settings.lastBriefDate = de.foldki.app.brief.DailyBriefing.today(now)
+            _brief.value = b
+            summarize(b)
+        }
+    }
+
+    private fun summarizeBrief(b: de.foldki.app.brief.Briefing) {
+        briefJob = viewModelScope.launch { summarize(b.copy(loading = true).also { _brief.value = it }) }
+    }
+
+    private suspend fun summarize(b: de.foldki.app.brief.Briefing) {
+        briefRetryAi = false
+        if (b.isEmpty) { _brief.value = b.copy(loading = false); return }
+        val summary = try {
+            delay(400) // Nano only answers apps in the foreground
+            nano.brief(de.foldki.app.brief.DailyBriefing.facts(b)).ifBlank { null }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Not in the foreground (yet): next open tries again. Otherwise: plain list without AI.
+            if (NanoEngine.errorCode(e) == com.google.mlkit.genai.common.GenAiException.ErrorCode.BACKGROUND_USE_BLOCKED) briefRetryAi = true
+            null
+        }
+        _brief.update { cur -> (cur ?: b).copy(summary = summary, loading = false) }
+    }
+
+    fun closeBrief() { briefJob?.cancel(); briefRetryAi = false; _brief.value = null }
+
+    fun toggleOpenItem(id: String, done: Boolean) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { openItems.setDone(id, done) }
+        _brief.update { b -> b?.copy(openItems = b.openItems.map { if (it.id == id) it.copy(done = done) else it }) }
+    }
+
+    /** "Als Chat öffnen": always Gemini Nano; the briefing is marked local and never sent to Claude. */
+    fun openBriefAsChat() {
+        val b = _brief.value ?: return
+        stop()
+        val conv = Conversation(
+            title = "Tagesstart " + b.date,
+            messages = listOf(ChatMessage(role = Role.ASSISTANT, text = de.foldki.app.brief.DailyBriefing.asText(b), engine = Engine.NANO, localOnly = true)),
+        )
+        setEngine(Engine.NANO)
+        upsert(conv)
+        _ui.update { it.copy(currentId = conv.id) }
+        closeBrief()
+    }
+
+    fun setDailyBrief(on: Boolean) {
+        settings.dailyBriefEnabled = on
+        if (!on) {
+            closeBrief()
+            openItems.clear()
+            de.foldki.app.brief.NotificationCollector.release()
+        } else if (settings.briefNotifications) de.foldki.app.brief.NotificationCollector.rebind(getApplication())
+    }
+
+    fun setBriefSources(calendar: Boolean, notifications: Boolean, chats: Boolean) {
+        settings.briefCalendar = calendar
+        settings.briefChats = chats
+        if (!chats) openItems.clear()
+        if (notifications != settings.briefNotifications) {
+            settings.briefNotifications = notifications
+            if (notifications && settings.dailyBriefEnabled) de.foldki.app.brief.NotificationCollector.rebind(getApplication())
+            else de.foldki.app.brief.NotificationCollector.release()
+        }
+    }
+
     fun toggleWeb() {
         val on = !_ui.value.webSearch
         settings.webSearch = on
@@ -351,7 +464,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     if (useGemma) _ui.update { it.copy(notice = "Gemma nicht verfügbar – Antwort von Nano") }
                     val flow = when (engine) {
                         Engine.NANO, Engine.GEMMA -> nano.reply(system, history, web)
-                        Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history, web)
+                        Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history.filterNot { it.localOnly }, web)
                     }
                     flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }
                 }

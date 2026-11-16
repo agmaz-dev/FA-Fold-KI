@@ -27,6 +27,8 @@ data class ChatMessage(
     val isError: Boolean = false,
     val attachments: List<Attachment> = emptyList(),
     val web: Boolean = false,
+    /** Data that must stay on the device (daily briefing): never sent to Claude. */
+    val localOnly: Boolean = false,
 )
 
 data class Conversation(
