@@ -135,6 +135,8 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                         }
                     }
 
+                    Section("Optionale On-Device-Modelle") { GemmaSettings(vm, ui) }
+
                     Section("Briefe") {
                         OutlinedTextField(
                             value = sender, onValueChange = { sender = it },

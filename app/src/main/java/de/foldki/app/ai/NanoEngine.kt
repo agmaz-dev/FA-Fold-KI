@@ -48,9 +48,7 @@ class NanoEngine {
         var web = ""
         if (webSearch) {
             val question = history.lastOrNull { it.role == Role.USER }?.text.orEmpty()
-            val terms = complete(
-                "Gib nur 2 bis 5 Suchbegriffe (ohne Erklärung, eine Zeile) für eine Internetsuche zu dieser Frage aus:\n$question"
-            ).lines().firstOrNull { it.isNotBlank() }?.trim()?.trim('"', '.', '*')?.take(100).orEmpty()
+            val terms = firstLineTerms(complete(searchTermsPrompt(question)))
             web = WebLookup.search(terms.ifBlank { question.take(100) })
         }
         val prompt = buildPrompt(system, history, web)
@@ -66,7 +64,15 @@ class NanoEngine {
         return sb.toString()
     }
 
-    private fun buildPrompt(system: String, history: List<ChatMessage>, web: String = ""): String {
+    companion object {
+    fun searchTermsPrompt(question: String) =
+        "Gib nur 2 bis 5 Suchbegriffe (ohne Erklärung, eine Zeile) für eine Internetsuche zu dieser Frage aus:\n$question"
+
+    fun firstLineTerms(answer: String): String =
+        answer.lines().firstOrNull { it.isNotBlank() }?.trim()?.trim('"', '.', '*')?.take(100).orEmpty()
+
+    /** Packs system text, attachments, web results and the last turns into one prompt (also used by Gemma). */
+    fun buildPrompt(system: String, history: List<ChatMessage>, web: String = ""): String {
         val turns = history.filter { !it.isError }.takeLast(6)
         val lines = turns.map { m ->
             val who = if (m.role == Role.USER) "Nutzer" else "Assistent"
@@ -97,4 +103,5 @@ class NanoEngine {
             append("Assistent:")
         }
     }
+}
 }

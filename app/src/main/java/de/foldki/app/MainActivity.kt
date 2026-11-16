@@ -16,4 +16,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent { FoldTheme { ChatApp(vm) } }
     }
+
+    /** In the background or low on memory: free the optional Gemma model (Nano is not affected). */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) vm.onBackground()
+    }
 }

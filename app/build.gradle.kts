@@ -83,6 +83,9 @@ dependencies {
     // Gemini Nano on-device (ML Kit GenAI Prompt API, via Android AICore)
     implementation("com.google.mlkit:genai-prompt:1.0.0-beta1")
 
+    // Optional Gemma 4 E2B on-device (LiteRT-LM). Pinned; needs Kotlin >= 2.3 (metadata 2.4).
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
+
     // Reading attachments: PDF text, OCR for photos/scans (offline), photo rotation
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")

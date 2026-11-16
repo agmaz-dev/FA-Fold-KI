@@ -16,7 +16,7 @@ class Settings(context: Context) {
 
     var engine: Engine
         get() = runCatching { Engine.valueOf(prefs.getString("engine", Engine.NANO.name)!!) }
-            .getOrDefault(Engine.NANO)
+            .getOrDefault(Engine.NANO).let { if (it == Engine.GEMMA) Engine.NANO else it }
         set(v) = prefs.edit().putString("engine", v.name).apply()
 
     var systemPrompt: String
@@ -54,6 +54,33 @@ class Settings(context: Context) {
     var sender: String
         get() = prefs.getString("sender", "") ?: ""
         set(v) = prefs.edit().putString("sender", v.trim()).apply()
+
+    /** Switch "Gemma verwenden" (only usable when the model is downloaded and verified). Nano stays default + fallback. */
+    var gemmaEnabled: Boolean
+        get() = prefs.getBoolean("gemma_enabled", false)
+        set(v) = prefs.edit().putBoolean("gemma_enabled", v).apply()
+
+    /** "GPU" (try GPU first, then CPU) or "CPU" (GPU failed or crashed before). */
+    var gemmaBackend: String
+        get() = prefs.getString("gemma_backend", "GPU") ?: "GPU"
+        set(v) = prefs.edit().putString("gemma_backend", v).apply()
+
+    /**
+     * Crash guard: true while Gemma loads or answers. Written with commit() (synchronously), so it is on disk
+     * before native code runs. If the app finds it still true at the next start, Gemma killed the app.
+     */
+    var gemmaLoading: Boolean
+        get() = prefs.getBoolean("gemma_loading", false)
+        set(v) { prefs.edit().putBoolean("gemma_loading", v).commit() }
+
+    /** Backend that was being tried when [gemmaLoading] was set ("GPU"/"CPU"). */
+    var gemmaAttempt: String
+        get() = prefs.getString("gemma_attempt", "") ?: ""
+        set(v) { prefs.edit().putString("gemma_attempt", v).commit() }
+
+    var gemmaCrashCount: Int
+        get() = prefs.getInt("gemma_crash_count", 0)
+        set(v) { prefs.edit().putInt("gemma_crash_count", v).commit() }
 
     companion object {
         const val DEFAULT_MODEL = "claude-opus-5-5"

@@ -4,7 +4,8 @@ import java.util.UUID
 
 enum class Role { USER, ASSISTANT }
 
-enum class Engine(val label: String) { NANO("Gemini Nano (offline)"), CLAUDE("Claude (online)") }
+/** [GEMMA] is never selected directly: it answers instead of Nano when "Gemma verwenden" is on (label of the answer). */
+enum class Engine(val label: String) { NANO("Gemini Nano (offline)"), CLAUDE("Claude (online)"), GEMMA("Gemma 4 (offline)") }
 
 /** A photo or PDF copied into the app's private storage. [text] is extracted text (PDF text / OCR). */
 data class Attachment(

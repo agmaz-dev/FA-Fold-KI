@@ -255,14 +255,14 @@ private fun TopBar(ui: UiState, vm: ChatViewModel, showMenu: Boolean, onMenu: ()
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    if (ui.engine == Engine.NANO) "Gemini Nano" else Settings.MODELS.firstOrNull { it.first == ui.model }?.second?.substringBefore(" (") ?: ui.model,
+                    if (ui.engine == Engine.NANO) (if (ui.gemmaActive) "Gemma 4" else "Gemini Nano") else Settings.MODELS.firstOrNull { it.first == ui.model }?.second?.substringBefore(" (") ?: ui.model,
                     fontWeight = FontWeight.Medium,
                 )
                 Text("  ▾", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                 DropdownMenuItem(
-                    text = { Column { Text("Gemini Nano"); Text("Offline auf dem Gerät", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                    text = { Column { Text(if (ui.gemmaActive) "Gemma 4 (Nano als Ersatz)" else "Gemini Nano"); Text("Offline auf dem Gerät", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                     leadingIcon = { Icon(Icons.Default.PhoneAndroid, null) },
                     onClick = { vm.setEngine(Engine.NANO); open = false },
                 )
@@ -569,7 +569,11 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     }
                     Spacer(Modifier.weight(1f))
                     if (m.engine != null) Text(
-                        (if (m.engine == Engine.NANO) (if (m.web) "Gemini Nano · Web" else "Gemini Nano · offline") else "Claude · online") +
+                        (when (m.engine) {
+                            Engine.NANO -> if (m.web) "Gemini Nano · Web" else "Gemini Nano · offline"
+                            Engine.GEMMA -> if (m.web) "Gemma 4 · Web" else "Gemma 4 · offline"
+                            else -> "Claude · online"
+                        }) +
                             (if (m.web && m.engine == Engine.CLAUDE) " · Websuche" else ""),
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.foldki.app.ai.ClaudeEngine
+import de.foldki.app.ai.GemmaEngine
+import de.foldki.app.ai.LocalModelManager
 import de.foldki.app.ai.NanoEngine
 import de.foldki.app.data.Attachment
 import de.foldki.app.data.Attachments
@@ -15,6 +17,12 @@ import de.foldki.app.data.Role
 import de.foldki.app.data.Settings
 import de.foldki.app.export.DocumentParser
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.produce
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +43,12 @@ data class UiState(
     val importing: Boolean = false,
     val notice: String? = null,
     val webSearch: Boolean = false,
+    /** Optional Gemma 4 E2B: download state and the switch "Gemma verwenden". */
+    val gemma: LocalModelManager.State = LocalModelManager.State.NotDownloaded,
+    val gemmaEnabled: Boolean = false,
 ) {
+    /** Gemma answers instead of Nano (Nano stays the fallback). */
+    val gemmaActive: Boolean get() = engine == Engine.NANO && gemmaEnabled && gemma is LocalModelManager.State.Ready
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
 
@@ -61,6 +74,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val settings = Settings(app)
     private val nano = NanoEngine()
     private val claude = ClaudeEngine()
+    val models = LocalModelManager(app)
+    private val gemma = GemmaEngine(app)
+    private val gemmaBusy = AtomicInteger(0)
+    private var gemmaGenerating = false
+    private var idleJob: Job? = null
     val attachments = Attachments(app)
     val voice = de.foldki.app.voice.VoiceController(app).apply {
         rate = settings.ttsRate; supertonicVoice = settings.stVoice
@@ -98,7 +116,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         voice.supertonicVoice = stVoice; voice.rate = rate
     }
 
-    override fun onCleared() { voice.release() }
+    override fun onCleared() { voice.release(); gemma.close() }
 
     private var job: Job? = null
 
@@ -109,11 +127,118 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             model = settings.claudeModel,
             apiKeySet = settings.apiKey.isNotBlank(),
             webSearch = settings.webSearch,
+            gemmaEnabled = settings.gemmaEnabled,
+            notice = gemmaCrashCheck(),
         )
     )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
-    init { checkNano() }
+    init {
+        checkNano()
+        models.beforeDelete = { gemma.close() }
+        viewModelScope.launch {
+            models.state.collect { st ->
+                _ui.update { it.copy(gemma = st) }
+                // Model gone (deleted/failed): the switch goes off, Nano answers again.
+                if (st is LocalModelManager.State.NotDownloaded || st is LocalModelManager.State.Failed) {
+                    if (settings.gemmaEnabled) settings.gemmaEnabled = false
+                    _ui.update { it.copy(gemmaEnabled = false) }
+                }
+            }
+        }
+        // Too hot: free Gemma's memory, Nano answers.
+        if (android.os.Build.VERSION.SDK_INT >= 29) runCatching {
+            power.addThermalStatusListener(app.mainExecutor) { status ->
+                if (status >= android.os.PowerManager.THERMAL_STATUS_SEVERE && !gemmaGenerating) gemma.close()
+            }
+        }
+    }
+
+    private val power get() = getApplication<Application>().getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+
+    /** Crash guard: Gemma was still loading/answering when the app died last time -> switch off, Nano again. */
+    private fun gemmaCrashCheck(): String? {
+        if (!settings.gemmaLoading) return null
+        settings.gemmaLoading = false
+        settings.gemmaCrashCount = settings.gemmaCrashCount + 1
+        settings.gemmaEnabled = false
+        if (settings.gemmaAttempt == "GPU") settings.gemmaBackend = "CPU" // next try goes straight to the CPU
+        return "Gemma hat die App beendet – Nano ist wieder aktiv"
+    }
+
+    private fun tooHot(): Boolean = android.os.Build.VERSION.SDK_INT >= 29 &&
+        runCatching { power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE }.getOrDefault(false)
+
+    fun downloadGemma() = models.download()
+    fun cancelGemma() = models.cancel()
+    fun deleteGemma() {
+        if (gemmaGenerating) stop()
+        settings.gemmaEnabled = false
+        _ui.update { it.copy(gemmaEnabled = false) }
+        models.delete()
+    }
+
+    fun setGemmaEnabled(on: Boolean) {
+        val v = on && models.isReady
+        settings.gemmaEnabled = v
+        if (v) settings.gemmaCrashCount = 0
+        if (!v) gemma.close()
+        _ui.update { it.copy(gemmaEnabled = v) }
+    }
+
+    /** App in the background or memory is low: free Gemma's memory (it loads again on the next question). */
+    fun onBackground() { if (!gemmaGenerating) gemma.close() }
+
+    private fun gemmaBegin() { if (gemmaBusy.incrementAndGet() == 1) settings.gemmaLoading = true }
+    private fun gemmaEnd() { if (gemmaBusy.decrementAndGet() <= 0) { gemmaBusy.set(0); settings.gemmaLoading = false } }
+
+    private fun scheduleIdleUnload() {
+        idleJob?.cancel()
+        idleJob = viewModelScope.launch { delay(5 * 60_000L); if (!gemmaGenerating) gemma.close() }
+    }
+
+    /**
+     * Tries Gemma. Returns false if it fails or times out BEFORE the first word (the caller then asks Nano).
+     * Errors after the first word are thrown like with any other engine.
+     */
+    private suspend fun replyWithGemma(convId: String, msgId: String, system: String, history: List<ChatMessage>, web: Boolean): Boolean {
+        if (tooHot()) return false
+        idleJob?.cancel()
+        gemmaBegin()
+        gemmaGenerating = true
+        try {
+            if (!gemma.isLoaded) {
+                val d = gemma.loadAsync(models.modelFile.absolutePath, settings.gemmaBackend == "GPU") { b -> settings.gemmaAttempt = b }
+                gemmaBegin(); d.invokeOnCompletion { gemmaEnd() } // stays guarded until the native load really ends
+                val backend = try { withTimeoutOrNull(60_000) { d.await() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { null }
+                    ?: return false
+                if (backend == "CPU" && settings.gemmaBackend == "GPU") settings.gemmaBackend = "CPU"
+            }
+            settings.gemmaAttempt = gemma.backendUsed ?: settings.gemmaBackend
+            editMessage(convId, msgId) { it.copy(engine = Engine.GEMMA) }
+            return coroutineScope {
+                val ch = produce(capacity = Channel.UNLIMITED) {
+                    try { gemma.reply(system, history, web).collect { send(it) } }
+                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Throwable) { close(e) }
+                }
+                val first = withTimeoutOrNull(if (web) 45_000 else 30_000) { ch.receiveCatching() }
+                val firstText = first?.getOrNull()
+                if (firstText == null) {
+                    ch.cancel()
+                    editMessage(convId, msgId) { it.copy(engine = Engine.NANO) }
+                    return@coroutineScope false
+                }
+                editMessage(convId, msgId) { it.copy(text = it.text + firstText) }
+                for (t in ch) editMessage(convId, msgId) { it.copy(text = it.text + t) }
+                true
+            }
+        } finally {
+            gemmaGenerating = false
+            gemmaEnd()
+            scheduleIdleUnload()
+        }
+    }
 
     fun checkNano() = viewModelScope.launch {
         val (text, ready, downloadable) = try {
@@ -220,11 +345,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         var finished = false
         job = viewModelScope.launch {
             try {
-                val flow = when (engine) {
-                    Engine.NANO -> nano.reply(system, history, web)
-                    Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history, web)
+                val useGemma = engine == Engine.NANO && _ui.value.gemmaActive
+                val byGemma = useGemma && replyWithGemma(conv.id, botMsg.id, system, history, web)
+                if (!byGemma) {
+                    if (useGemma) _ui.update { it.copy(notice = "Gemma nicht verfügbar – Antwort von Nano") }
+                    val flow = when (engine) {
+                        Engine.NANO, Engine.GEMMA -> nano.reply(system, history, web)
+                        Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history, web)
+                    }
+                    flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }
                 }
-                flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }
                 finished = true
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
