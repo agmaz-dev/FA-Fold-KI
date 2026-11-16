@@ -21,22 +21,25 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build release APK
+        id: build
         run: |
           chmod +x gradlew
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           ./gradlew --no-daemon assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk FoldKI.apk
+          VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          cp app/build/outputs/apk/release/app-release.apk "FoldKI-$VERSION.apk"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: FoldKI-apk
-          path: FoldKI.apk
+          name: FoldKI-${{ steps.build.outputs.version }}
+          path: FoldKI-*.apk
 
       - name: Publish as GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-${{ github.run_number }}
-          name: Fold KI APK (Build ${{ github.run_number }})
-          body: "APK zum direkten Installieren auf Android. Branch: ${{ github.ref_name }}"
-          files: FoldKI.apk
+          name: Fold KI ${{ steps.build.outputs.version }} (Build ${{ github.run_number }})
+          body: "Fold KI ${{ steps.build.outputs.version }} – APK zum direkten Installieren auf Android. Branch: ${{ github.ref_name }}"
+          files: FoldKI-*.apk
           make_latest: true
