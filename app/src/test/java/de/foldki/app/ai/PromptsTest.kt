@@ -38,4 +38,16 @@ class PromptsTest {
         assertTrue(Prompts.wantsThinking("Fix das:\n```\nfun main() {}\n```", false))
         assertTrue(Prompts.wantsThinking("Berechne die Wurzel aus 144", false))
     }
+
+    @Test fun userDataHasOnlyDataAndTheCorrectionHint() {
+        assertEquals("", Prompts.userData("", emptyList(), "", false))
+        val hint = de.foldki.app.data.Corrections.HINT
+        assertEquals(hint + "\n\n", Prompts.userData("", emptyList(), "", true))
+        val d = Prompts.userData("Angehängte Datei a.pdf:\ninhalt\n\n", listOf("b.jpg"), "Treffer 1", true)
+        assertTrue(d.startsWith(hint))
+        assertTrue(d.contains("Angehängte Datei a.pdf:\ninhalt"))
+        assertTrue(d.contains("Angehängte Datei b.jpg: (kein Text lesbar)"))
+        assertTrue(d.contains("Internetsuche:\nTreffer 1"))
+        assertFalse(Prompts.userData("", emptyList(), "Treffer", false).contains("Hinweis"))
+    }
 }

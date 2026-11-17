@@ -21,7 +21,12 @@ data class MemoryEntry(
     val category: MemoryCategory,
     val active: Boolean,
     val created: Long,
-)
+    /** Saved by the app by itself (automatic learning) instead of typed or confirmed by the user. */
+    val auto: Boolean = false,
+) {
+    /** Entry written after the user corrected an answer ("Bei der Frage „…“ ist … falsch; richtig ist …"). */
+    val isCorrection: Boolean get() = category == MemoryCategory.PUZZLE && text.startsWith("Bei der Frage")
+}
 
 /** Where the entries are kept (SharedPreferences on the phone; a plain map in unit tests). */
 interface MemoryStorage {
@@ -46,7 +51,7 @@ class MemoryStore(private val storage: MemoryStorage, private val now: () -> Lon
     private var cache: List<MemoryEntry>? = null
 
     /** All entries, oldest first. */
-    fun all(): List<MemoryEntry> = cache ?: load().also { cache = it }
+    @Synchronized fun all(): List<MemoryEntry> = cache ?: load().also { cache = it }
 
     private fun load(): List<MemoryEntry> {
         storage.get(KEY)?.let { json ->
@@ -56,7 +61,7 @@ class MemoryStore(private val storage: MemoryStorage, private val now: () -> Lon
                     val o = a.getJSONObject(i)
                     MemoryEntry(
                         o.getString("id"), o.getString("text"), MemoryCategory.of(o.optString("category")),
-                        o.optBoolean("active", true), o.optLong("created", 0L),
+                        o.optBoolean("active", true), o.optLong("created", 0L), o.optBoolean("auto", false),
                     )
                 }
             }.getOrDefault(emptyList())
@@ -78,24 +83,25 @@ class MemoryStore(private val storage: MemoryStorage, private val now: () -> Lon
         cache = list
         val a = JSONArray()
         list.forEach { e ->
-            a.put(JSONObject().put("id", e.id).put("text", e.text).put("category", e.category.name).put("active", e.active).put("created", e.created))
+            a.put(JSONObject().put("id", e.id).put("text", e.text).put("category", e.category.name).put("active", e.active).put("created", e.created).put("auto", e.auto))
         }
         storage.put(KEY, a.toString())
     }
 
     /** Adds an entry (no duplicate text, at most [MAX] entries). Returns the new entry or null (empty, too short, duplicate). */
-    fun add(text: String, category: MemoryCategory = MemoryCategory.PERSONAL, active: Boolean = true): MemoryEntry? {
+    @Synchronized
+    fun add(text: String, category: MemoryCategory = MemoryCategory.PERSONAL, active: Boolean = true, auto: Boolean = false): MemoryEntry? {
         val t = clean(text)
         if (t.length < 3) return null
         val list = all()
-        if (list.any { it.text.equals(t, true) }) return null
-        val e = MemoryEntry(UUID.randomUUID().toString(), t, category, active, maxOf(now(), (list.maxOfOrNull { it.created } ?: 0L) + 1))
+        if (list.any { norm(it.text) == norm(t) }) return null
+        val e = MemoryEntry(UUID.randomUUID().toString(), t, category, active, maxOf(now(), (list.maxOfOrNull { it.created } ?: 0L) + 1), auto)
         save((list + e).takeLast(MAX))
         return e
     }
 
     /** Changes text and category of an entry. False if it does not exist or the text is too short. */
-    fun update(id: String, text: String, category: MemoryCategory): Boolean {
+    @Synchronized fun update(id: String, text: String, category: MemoryCategory): Boolean {
         val t = clean(text)
         if (t.length < 3) return false
         val list = all()
@@ -104,11 +110,79 @@ class MemoryStore(private val storage: MemoryStorage, private val now: () -> Lon
         return true
     }
 
-    fun setActive(id: String, active: Boolean) = save(all().map { if (it.id == id) it.copy(active = active) else it })
+    @Synchronized fun setActive(id: String, active: Boolean) = save(all().map { if (it.id == id) it.copy(active = active) else it })
 
-    fun remove(id: String) = save(all().filterNot { it.id == id })
+    @Synchronized fun remove(id: String) = save(all().filterNot { it.id == id })
+
+    /** Result of an import: how many entries were new and how many were skipped as duplicates. */
+    data class ImportResult(val imported: Int, val duplicates: Int)
+
+    /**
+     * Merges imported entries into the memory. Duplicates (same text after normalising) are skipped and the existing
+     * entry stays unchanged. Imported entries get new ids; category, switch, source and creation time are kept.
+     */
+    @Synchronized
+    fun merge(data: ImportData): ImportResult {
+        var list = all()
+        var imported = 0
+        var duplicates = 0
+        val seen = list.map { norm(it.text) }.toHashSet()
+        for (e in data.entries) {
+            if (!seen.add(norm(e.text))) { duplicates++; continue }
+            list = list + e.copy(id = UUID.randomUUID().toString())
+            imported++
+        }
+        if (imported > 0) save(list.sortedBy { it.created }.takeLast(MAX))
+        return ImportResult(imported, duplicates)
+    }
+
+    /** All entries and the "Automatisch lernen" flag as readable JSON (pretty-printed, with a version field). */
+    @Synchronized
+    fun exportJson(autoLearn: Boolean): String = toJson(all(), autoLearn)
+
+    /** Thrown for a file that is not a valid memory export; the message is shown to the user as is. */
+    class InvalidImport(message: String) : Exception(message)
+
+    /** Entries read from a file ([skipped] = entries without usable text) and the stored "Automatisch lernen" flag. */
+    data class ImportData(val entries: List<MemoryEntry>, val autoLearn: Boolean?, val skipped: Int)
 
     companion object {
+        const val FORMAT = "FA-Fold-KI-Gedaechtnis"
+        const val VERSION = 1
+
+        fun toJson(entries: List<MemoryEntry>, autoLearn: Boolean): String {
+            val a = JSONArray()
+            entries.forEach { e ->
+                a.put(
+                    JSONObject().put("text", e.text).put("kategorie", e.category.label).put("aktiv", e.active)
+                        .put("quelle", if (e.auto) "automatisch" else "manuell").put("erstellt", e.created),
+                )
+            }
+            return JSONObject().put("format", FORMAT).put("version", VERSION).put("automatischLernen", autoLearn).put("eintraege", a).toString(2)
+        }
+
+        /** Reads and validates an export file. Throws [InvalidImport] (German message) if it is not usable; nothing is changed then. */
+        fun parseImport(json: String): ImportData {
+            val root = try { JSONObject(json) } catch (e: Exception) { throw InvalidImport("Das ist keine gültige JSON-Datei.") }
+            if (root.optString("format") != FORMAT) throw InvalidImport("Das ist keine Gedächtnis-Datei von FA Fold KI.")
+            if (root.optInt("version", 0) !in 1..VERSION) throw InvalidImport("Diese Gedächtnis-Datei hat eine unbekannte Version.")
+            val arr = root.optJSONArray("eintraege") ?: throw InvalidImport("In der Datei fehlt die Liste der Einträge.")
+            val out = ArrayList<MemoryEntry>()
+            var skipped = 0
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i)
+                val text = o?.optString("text").orEmpty().let { clean(it) }
+                if (o == null || text.length < 3) { skipped++; continue }
+                val cat = o.optString("kategorie").let { k -> MemoryCategory.values().firstOrNull { it.label == k || it.name == k } ?: MemoryCategory.OTHER }
+                out += MemoryEntry(
+                    id = "", text = text, category = cat, active = o.optBoolean("aktiv", true),
+                    created = o.optLong("erstellt", 0L), auto = o.optString("quelle") == "automatisch",
+                )
+            }
+            if (arr.length() > 0 && out.isEmpty()) throw InvalidImport("Die Datei enthält keine gültigen Einträge.")
+            return ImportData(out, if (root.has("automatischLernen")) root.optBoolean("automatischLernen") else null, skipped)
+        }
+
         const val MAX = 200
         const val MAX_TEXT = 300
 
@@ -121,26 +195,44 @@ class MemoryStore(private val storage: MemoryStorage, private val now: () -> Lon
         private const val KEY = "entries"
         private const val LEGACY_KEY = "facts"
 
+        /** Text for comparing entries: lower case, single spaces, no closing punctuation. */
+        fun norm(t: String): String = t.lowercase().replace(Regex("\\s+"), " ").trim().trimEnd('.', '!', '?', ' ')
+
+        private val STOP = setOf(
+            "eine", "einer", "einen", "nicht", "auch", "aber", "oder", "wird", "werden", "haben", "habe", "dass", "sich", "ihre",
+            "mein", "meine", "dein", "deine", "dann", "wenn", "noch", "nach", "über", "sind", "bitte", "diese", "dieser", "diesen",
+            "alle", "wie", "viele", "wieviele", "kann", "kannst", "soll", "sollst", "mach", "mache", "gib", "sage", "sag",
+        )
+
+        private fun words(t: String): Set<String> =
+            Regex("[\\p{L}\\p{N}]{4,}").findAll(t.lowercase()).map { it.value }.filter { it !in STOP }.toSet()
+
         private fun clean(t: String): String = t.trim().replace(Regex("\\s+"), " ").take(MAX_TEXT).trim()
 
         /**
          * "- text" lines of the active entries below [HEADING]; newest first until [maxChars] is reached, then
          * written oldest to newest. Empty string if no entry is active.
          */
-        fun promptBlock(entries: List<MemoryEntry>, maxChars: Int = PROMPT_CHARS): String {
-            val active = entries.filter { it.active }.sortedByDescending { it.created }
+        fun promptBlock(entries: List<MemoryEntry>, maxChars: Int = PROMPT_CHARS, question: String = ""): String {
+            val q = words(question)
+            // Entries that share words with the current question first (corrections slightly ahead), then newest.
+            fun score(e: MemoryEntry): Int {
+                val overlap = if (q.isEmpty()) 0 else words(e.text).count { it in q }
+                return if (overlap == 0) 0 else overlap * 2 + (if (e.isCorrection) 1 else 0)
+            }
+            val active = entries.filter { it.active }.sortedWith(compareByDescending<MemoryEntry> { score(it) }.thenByDescending { it.created })
             var used = HEADING.length
             val chosen = ArrayList<MemoryEntry>()
             for (e in active) {
                 val len = e.text.length + 3 // "- " + newline
-                if (used + len > maxChars) break
+                if (used + len > maxChars) continue
                 used += len
                 chosen += e
             }
             if (chosen.isEmpty()) return ""
             return buildString {
                 append(HEADING)
-                chosen.reversed().forEach { append("\n- ").append(it.text) }
+                chosen.sortedBy { it.created }.forEach { append("\n- ").append(it.text) }
             }
         }
 
@@ -148,8 +240,8 @@ class MemoryStore(private val storage: MemoryStorage, private val now: () -> Lon
          * System message: the user's own instruction exactly as typed, then the active entries. Blank instruction and
          * no active entry = empty string = no system message at all.
          */
-        fun systemMessage(userPrompt: String, entries: List<MemoryEntry>): String {
-            val block = promptBlock(entries)
+        fun systemMessage(userPrompt: String, entries: List<MemoryEntry>, question: String = ""): String {
+            val block = promptBlock(entries, PROMPT_CHARS, question)
             return when {
                 block.isEmpty() -> userPrompt
                 userPrompt.isBlank() -> block

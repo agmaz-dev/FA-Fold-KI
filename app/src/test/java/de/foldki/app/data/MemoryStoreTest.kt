@@ -124,4 +124,130 @@ class MemoryStoreTest {
         assertTrue(long.length <= 201 && long.endsWith("…"))
         assertEquals("", MemoryStore.excerpt("  "))
     }
+
+    // ---- prioritization ----
+
+    private fun corr(text: String, created: Long) = MemoryEntry(text, text, MemoryCategory.PUZZLE, true, created, true)
+
+    @Test fun relevantEntriesComeFirstWhenCapIsTight() {
+        val apples = corr("Bei der Frage „Äpfel im Korb“ ist 5 falsch; richtig ist 3 (zwei wurden gegessen).", 1)
+        val other1 = entry("Ich mag Tee und trinke ihn morgens immer gern am Fenster", true, 2)
+        val other2 = entry("Antworte kurz und freundlich in einfachen Worten bitte", true, 3)
+        val cap = MemoryStore.HEADING.length + apples.text.length + 3
+        val b = MemoryStore.promptBlock(listOf(apples, other1, other2), cap, "Wie viele Äpfel sind im Korb?")
+        assertTrue(b.contains("Äpfel im Korb"))
+        assertFalse(b.contains("Tee"))
+        // without a matching question the newest entry wins
+        val c = MemoryStore.promptBlock(listOf(apples, other1, other2), MemoryStore.HEADING.length + other2.text.length + 3, "Hallo")
+        assertTrue(c.contains("kurz und freundlich"))
+        assertFalse(c.contains("Äpfel"))
+    }
+
+    @Test fun correctionsAreRankedAheadOfEqualOverlap() {
+        val plain = entry("Korb Äpfel stehen in der Küche", true, 5)
+        val c = corr("Bei der Frage „Korb Äpfel“ ist 5 falsch; richtig ist 3.", 1)
+        val tight = MemoryStore.HEADING.length + c.text.length + 3
+        val b = MemoryStore.promptBlock(listOf(plain, c), tight, "Korb Äpfel")
+        assertTrue(b.contains("richtig ist 3"))
+        assertFalse(b.contains("Küche"))
+    }
+
+    @Test fun inactiveEntriesNeverComeBack() {
+        val off = corr("Bei der Frage „x“ ist a falsch; richtig ist b.", 1).copy(active = false)
+        assertEquals("", MemoryStore.promptBlock(listOf(off), 1500, "x a b"))
+    }
+
+    @Test fun autoFlagIsStoredAndDuplicatesAreNormalised() {
+        val st = MapStorage()
+        val m = store(st)
+        assertTrue(m.add("Ich heiße Paula", auto = true)!!.auto)
+        assertNull(m.add("  ich HEIßE   paula. ", auto = false))
+        assertTrue(store(st).all().single().auto)
+        assertFalse(m.add("Handschriftlich", auto = false)!!.auto)
+    }
+
+    // ---- export / import ----
+
+    @Test fun exportImportRoundtrip() {
+        val a = store()
+        a.add("Schreibe kurz.", MemoryCategory.STYLE)
+        val off = a.add("Bei der Frage „Väter“ ist 4 falsch; richtig ist 3.", MemoryCategory.PUZZLE, active = false, auto = true)!!
+        a.add("Ich wohne in Berlin", MemoryCategory.PERSONAL, auto = true)
+        val json = a.exportJson(autoLearn = false)
+        assertTrue(json.contains("\n  ")) // pretty-printed
+        assertTrue(json.contains("\"version\": 1"))
+
+        val data = MemoryStore.parseImport(json)
+        assertEquals(false, data.autoLearn)
+        assertEquals(0, data.skipped)
+        val b = store()
+        val r = b.merge(data)
+        assertEquals(MemoryStore.ImportResult(3, 0), r)
+        val got = b.all()
+        assertEquals(a.all().map { it.text }, got.map { it.text })
+        assertEquals(a.all().map { it.category }, got.map { it.category })
+        assertEquals(a.all().map { it.active }, got.map { it.active })
+        assertEquals(a.all().map { it.auto }, got.map { it.auto })
+        assertEquals(a.all().map { it.created }, got.map { it.created })
+        assertFalse(got.first { it.text == off.text }.active)
+        assertTrue(got.map { it.id }.toSet().size == 3)
+    }
+
+    @Test fun mergeKeepsExistingAndCountsDuplicates() {
+        val src = store()
+        src.add("Antworte kurz", MemoryCategory.STYLE)
+        src.add("Neuer Eintrag", MemoryCategory.OTHER)
+        val json = src.exportJson(true)
+
+        val dst = store()
+        val mine = dst.add("antworte KURZ.", MemoryCategory.PERSONAL, active = false)!!
+        val r = dst.merge(MemoryStore.parseImport(json))
+        assertEquals(1, r.imported)
+        assertEquals(1, r.duplicates)
+        val kept = dst.all().first { it.id == mine.id }
+        assertEquals(MemoryCategory.PERSONAL, kept.category) // existing wins
+        assertFalse(kept.active)
+        assertEquals(2, dst.all().size)
+        // second import: everything is a duplicate now
+        assertEquals(MemoryStore.ImportResult(0, 2), dst.merge(MemoryStore.parseImport(json)))
+    }
+
+    @Test fun invalidFilesAreRejectedAndChangeNothing() {
+        val st = MapStorage()
+        val m = store(st)
+        m.add("Bleibt bestehen")
+        val before = st.map["entries"]
+        val bad = listOf(
+            "", "kein json", "[1,2]", "{}",
+            """{"format":"anderes","version":1,"eintraege":[]}""",
+            """{"format":"FA-Fold-KI-Gedaechtnis","version":99,"eintraege":[]}""",
+            """{"format":"FA-Fold-KI-Gedaechtnis","version":1}""",
+            """{"format":"FA-Fold-KI-Gedaechtnis","version":1,"eintraege":[{"text":"x"},{"kategorie":"Persönlich"}]}""",
+        )
+        for (json in bad) {
+            try {
+                m.merge(MemoryStore.parseImport(json))
+                throw AssertionError("accepted: $json")
+            } catch (e: MemoryStore.InvalidImport) {
+                assertTrue(e.message!!.isNotBlank())
+            }
+        }
+        assertEquals(before, st.map["entries"])
+        assertEquals(1, m.all().size)
+    }
+
+    @Test fun importSkipsBrokenEntriesButKeepsGoodOnes() {
+        val json = """{"format":"FA-Fold-KI-Gedaechtnis","version":1,"eintraege":[
+            {"text":"Gut und lang genug","kategorie":"Schreibstil","aktiv":false,"quelle":"automatisch","erstellt":5},
+            {"text":""}, 7, {"text":"Zweiter Eintrag","kategorie":"Unbekannt"}]}"""
+        val d = MemoryStore.parseImport(json)
+        assertEquals(2, d.entries.size)
+        assertEquals(2, d.skipped)
+        assertNull(d.autoLearn)
+        assertEquals(MemoryCategory.STYLE, d.entries[0].category)
+        assertFalse(d.entries[0].active)
+        assertTrue(d.entries[0].auto)
+        assertEquals(MemoryCategory.OTHER, d.entries[1].category)
+        assertTrue(d.entries[1].active)
+    }
 }

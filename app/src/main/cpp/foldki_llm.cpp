@@ -137,9 +137,10 @@ Java_de_foldki_app_ai_LlamaNative_nativeUnload(JNIEnv *, jclass) {
 
 // roles/contents: parallele Arrays; cb.onToken(byte[]) wird für jedes Textstück aufgerufen.
 // think = false: bei Thinking-Vorlagen wird ein leerer Denkblock vorgegeben (schnelle interne Aufgaben).
+// thinkBudget > 0: nach so vielen Tokens im Denkblock wird "</think>" eingefügt, damit die Antwort sicher kommt.
 extern "C" JNIEXPORT jstring JNICALL
 Java_de_foldki_app_ai_LlamaNative_nativeGenerate(JNIEnv *env, jclass, jobjectArray roles, jobjectArray contents,
-                                                 jint maxTokens, jfloat temp, jint topK, jfloat topP, jboolean think, jobject cb) {
+                                                 jint maxTokens, jfloat temp, jint topK, jfloat topP, jboolean think, jint thinkBudget, jobject cb) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_stop = false;
     g_think_open = false;
@@ -244,6 +245,11 @@ Java_de_foldki_app_ai_LlamaNative_nativeGenerate(JNIEnv *env, jclass, jobjectArr
     std::string pending;
     int generated = 0;
     bool cut = false;
+    // Denk-Budget: zählt Tokens, solange der Denkblock offen ist (nur wenn die Ausgabe mit Gedanken beginnt)
+    bool think_done = !g_think_open.load();
+    bool think_cut = false;
+    int think_tokens = 0;
+    std::string think_tail;
     for (int i = 0; !g_stop; i++) {
         if (i >= limit) { cut = true; break; }
         llama_token t = llama_sampler_sample(smpl, g_ctx, -1);
@@ -263,15 +269,42 @@ Java_de_foldki_app_ai_LlamaNative_nativeGenerate(JNIEnv *env, jclass, jobjectArr
         if (llama_decode(g_ctx, b) != 0) break;
         generated++;
         g_cache.push_back(t);
+        if (!think_done) {
+            if (len > 0) think_tail.append(buf, len);
+            if (think_tail.find("</think>") != std::string::npos) {
+                think_done = true;
+            } else {
+                if (think_tail.size() > 32) think_tail.erase(0, think_tail.size() - 32);
+                think_tokens++;
+                if (thinkBudget > 0 && think_tokens >= thinkBudget) {
+                    // Zu langes Nachdenken: Denkblock selbst schließen, das Modell schreibt danach die Antwort
+                    static const std::string close_txt = "\n</think>\n\n";
+                    auto ct = common_tokenize(vocab, close_txt, false, true);
+                    if (!ct.empty() && (int) g_cache.size() + (int) ct.size() < n_ctx - 8) {
+                        // unvollständige UTF-8-Reste vor dem Einfügen verwerfen
+                        pending.clear();
+                        jbyteArray arr = env->NewByteArray((jsize) close_txt.size());
+                        env->SetByteArrayRegion(arr, 0, (jsize) close_txt.size(), (const jbyte *) close_txt.data());
+                        env->CallVoidMethod(cb, onTok, arr);
+                        env->DeleteLocalRef(arr);
+                        llama_batch cb2 = llama_batch_get_one(ct.data(), (int32_t) ct.size());
+                        if (llama_decode(g_ctx, cb2) != 0) break;
+                        g_cache.insert(g_cache.end(), ct.begin(), ct.end());
+                        think_cut = true;
+                    }
+                    think_done = true;
+                }
+            }
+        }
         if ((int) g_cache.size() >= n_ctx - 2) { cut = true; break; }
     }
     llama_sampler_free(smpl);
     const int64_t t2 = ggml_time_us();
-    char stats[600];
+    char stats[700];
     snprintf(stats, sizeof(stats),
-             "{\"prompt\":%d,\"reused\":%d,\"t_prompt\":%lld,\"gen\":%d,\"t_gen\":%lld,\"limit\":%d,\"cut\":%s,\"ctx\":%d,\"tmpl\":%s,\"think_open\":%s,\"threads\":%d,\"cpu\":\"%s\"}",
+             "{\"prompt\":%d,\"reused\":%d,\"t_prompt\":%lld,\"gen\":%d,\"t_gen\":%lld,\"limit\":%d,\"cut\":%s,\"ctx\":%d,\"tmpl\":%s,\"think_open\":%s,\"think_cut\":%s,\"threads\":%d,\"cpu\":\"%s\"}",
              (int) toks.size(), (int) reused, (long long) ((t1 - t0) / 1000), generated, (long long) ((t2 - t1) / 1000),
-             limit, cut ? "true" : "false", n_ctx, templ_ok ? "true" : "false", g_think_open ? "true" : "false",
+             limit, cut ? "true" : "false", n_ctx, templ_ok ? "true" : "false", g_think_open ? "true" : "false", think_cut ? "true" : "false",
              (int) llama_n_threads(g_ctx), cpu_flags().c_str());
     return env->NewStringUTF(stats);
 }

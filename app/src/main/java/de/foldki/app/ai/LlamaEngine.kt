@@ -43,6 +43,9 @@ class LlamaEngine(context: Context) {
     companion object {
         const val N_CTX = 8192
         const val MAX_ANSWER_TOKENS = 4000
+
+        /** Thinking stops after this many tokens ("</think>" is inserted natively), so an answer always follows. */
+        const val THINK_BUDGET = 1200
         const val MAX_TASK_TOKENS = 1024
         /** Characters of attachment text that fit next to 4000 answer tokens in 8192 tokens of context. */
         const val DOC_CHARS = 8000
@@ -81,7 +84,7 @@ class LlamaEngine(context: Context) {
                 var first = true
                 val stats = LlamaNative.nativeGenerate(
                     messages.map { it.first }.toTypedArray(), messages.map { it.second }.toTypedArray(),
-                    maxTokens, if (precise) 0.3f else 0.6f, 20, 0.95f, think,
+                    maxTokens, if (precise) 0.3f else 0.6f, 20, 0.95f, think, if (think) THINK_BUDGET else 0,
                 ) { bytes ->
                     if (first) { first = false; onThinkOpen(LlamaNative.nativeThinkOpen()) }
                     trySend(String(bytes, Charsets.UTF_8))
@@ -95,10 +98,14 @@ class LlamaEngine(context: Context) {
     }.flowOn(Dispatchers.Default)
 
     /**
-     * Chat answer. System message = [system] exactly as given (the user's own instruction); if blank there is no system
-     * message at all. Attached-file text and web results are plain data, put before the question in the last user turn.
+     * Chat answer. System message = [system] exactly as given (the user's own instruction + his active memory entries);
+     * if blank there is no system message at all. Attached-file text and web results are plain data, put before the
+     * question in the last user turn. [correction] = the user marked the previous answer as wrong: one hint line, thinking on.
      */
-    fun reply(system: String, history: List<ChatMessage>, webSearch: Boolean, onThinkOpen: (Boolean) -> Unit = {}): Flow<String> = flow {
+    fun reply(
+        system: String, history: List<ChatMessage>, webSearch: Boolean, correction: Boolean = false,
+        onThinkOpen: (Boolean) -> Unit = {},
+    ): Flow<String> = flow {
         var web = ""
         if (webSearch) {
             val question = history.lastOrNull { it.role == Role.USER }?.text.orEmpty()
@@ -107,13 +114,12 @@ class LlamaEngine(context: Context) {
         }
         val turns = history.filter { !it.isError && it.text.isNotBlank() }
         val last = turns.lastOrNull { it.role == Role.USER } ?: return@flow
-        val data = buildString {
-            val docs = recentDocs(history)
-            if (docs.isNotBlank()) append(docs.trim()).append("\n\n")
-            val noText = history.flatMap { it.attachments }.filter { it.text.isBlank() }
-            for (a in noText) append("Angehängte Datei ").append(a.name).append(": (kein Text lesbar)\n\n")
-            if (web.isNotBlank()) append("Internetsuche:\n").append(web.take(WEB_CHARS).trim()).append("\n\n")
-        }
+        val data = Prompts.userData(
+            docs = recentDocs(history),
+            noTextNames = history.flatMap { it.attachments }.filter { it.text.isBlank() }.map { it.name },
+            web = web.take(WEB_CHARS),
+            correction = correction,
+        )
         // Earlier turns: only answers (never the thoughts), newest kept first when the budget is tight.
         val earlier = turns.subList(0, turns.lastIndexOf(last)).takeLast(10)
         val msgs = ArrayList<Pair<String, String>>()
@@ -126,7 +132,7 @@ class LlamaEngine(context: Context) {
         }
         while (msgs.isNotEmpty() && msgs.first().first != "user") msgs.removeAt(0)
         val all = Prompts.chatMessages(system, msgs, data, last.text)
-        val think = Prompts.wantsThinking(last.text, history.any { it.attachments.isNotEmpty() })
+        val think = correction || Prompts.wantsThinking(last.text, history.any { it.attachments.isNotEmpty() })
         generate(all, MAX_ANSWER_TOKENS, think = think, onThinkOpen = onThinkOpen).collect { emit(it) }
     }
 
@@ -151,6 +157,12 @@ class LlamaEngine(context: Context) {
         }
         return complete(system + if (text.isBlank()) "" else "\n\nInhalt der angehängten Dateien:\n$text", question)
     }
+
+    /** Background learning from a correction: one short line in the memory form, or "" (no thinking, short). */
+    suspend fun correctionLine(question: String, wrong: String, userMessage: String, newAnswer: String): String =
+        de.foldki.app.data.Corrections.parseExtraction(
+            complete("", de.foldki.app.data.Corrections.extractionPrompt(question, wrong, userMessage, newAnswer), maxTokens = 200),
+        ).orEmpty()
 
     /** Daily briefing: own short instruction, facts at most 3500 characters. */
     suspend fun brief(facts: String): String = complete(Prompts.BRIEF_SYSTEM, facts.take(3500) + "\n\nTagesstart:", precise = false)

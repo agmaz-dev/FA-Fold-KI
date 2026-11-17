@@ -31,6 +31,11 @@ class Settings(context: Context) {
         get() = prefs.getString("system_prompt", "") ?: ""
         set(v) = prefs.edit().putString("system_prompt", v).apply()
 
+    /** "Automatisch lernen": the app saves memory entries by itself (explicit "Merk dir", statements about the user, corrections). On by default. */
+    var autoLearn: Boolean
+        get() = prefs.getBoolean("auto_learn", true)
+        set(v) = prefs.edit().putBoolean("auto_learn", v).apply()
+
     var stVoice: String
         get() = prefs.getString("st_voice", "tessa") ?: "tessa"
         set(v) = prefs.edit().putString("st_voice", v).apply()

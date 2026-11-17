@@ -27,4 +27,15 @@ Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
     /** Messages for a chat answer: no system message when [system] is blank; [data] (files, web) goes in front of the question. */
     fun chatMessages(system: String, earlier: List<Pair<String, String>>, data: String, question: String): List<Pair<String, String>> =
         (if (system.isBlank()) emptyList() else listOf("system" to system)) + earlier + ("user" to (data + question))
+
+    /**
+     * Data in front of the question in the user turn: file text ("Angehängte Datei <Name>:"), "Internetsuche:" and, if the
+     * user marked the previous answer as wrong, [de.foldki.app.data.Corrections.HINT]. Contains data only, no rules.
+     */
+    fun userData(docs: String, noTextNames: List<String>, web: String, correction: Boolean): String = buildString {
+        if (correction) append(de.foldki.app.data.Corrections.HINT).append("\n\n")
+        if (docs.isNotBlank()) append(docs.trim()).append("\n\n")
+        for (n in noTextNames) append("Angehängte Datei ").append(n).append(": (kein Text lesbar)\n\n")
+        if (web.isNotBlank()) append("Internetsuche:\n").append(web.trim()).append("\n\n")
+    }
 }

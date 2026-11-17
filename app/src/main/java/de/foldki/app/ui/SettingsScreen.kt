@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.rememberLauncherForActivityResult
 import android.widget.Toast
 import de.foldki.app.data.MemoryStore
 import de.foldki.app.data.MemoryEntry
@@ -406,13 +408,38 @@ private fun MemoryPage(vm: ChatViewModel) {
     var editing by remember { mutableStateOf<MemoryEntry?>(null) }
     var deleting by remember { mutableStateOf<MemoryEntry?>(null) }
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val auto by vm.autoLearn.collectAsStateWithLifecycle()
+    val toast: (String) -> Unit = { Toast.makeText(ctx, it, Toast.LENGTH_LONG).show() }
+    // Export / import of all entries as a readable JSON file; the user picks the place (Downloads, Drive …).
+    val exportFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) vm.exportMemory(uri, toast)
+    }
+    val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importMemory(uri, toast)
+    }
 
     Note(
         "Kurze Einträge (Regeln, Beispiele, Fakten), die nur auf dem Handy bleiben. Aktive Einträge gehen mit jeder Frage ans Modell, " +
             "ausgeschaltete nicht. Du kannst alles ändern oder löschen. Im Chat: „Merk dir: …“ oder „Merken“ unter einer Antwort.",
         Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
     )
-    FkButton("+ Eintrag", Modifier.padding(top = 6.dp, bottom = 10.dp)) { adding = true }
+    Group {
+        SettingRow(
+            "Automatisch lernen",
+            if (auto) "an · Gemerktes und Korrekturen werden von selbst gespeichert" else "aus · nur was du selbst einträgst",
+            leading = { Tile(Icons.Default.Psychology, FK.T6) },
+        ) { FkToggle(auto, { on -> vm.setAutoLearn(on) }) }
+    }
+    FkButton("+ Eintrag", Modifier.padding(top = 10.dp, bottom = 10.dp)) { adding = true }
+    Row(Modifier.fillMaxWidth().padding(bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        FkButton("Exportieren", Modifier.weight(1f), ghost = true) {
+            val day = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.GERMANY).format(java.util.Date())
+            runCatching { exportFile.launch("FA-Fold-KI-Gedaechtnis-$day.json") }.onFailure { toast("Speichern nicht möglich.") }
+        }
+        FkButton("Importieren", Modifier.weight(1f), ghost = true) {
+            runCatching { importFile.launch(arrayOf("application/json", "*/*")) }.onFailure { toast("Dateiauswahl nicht möglich.") }
+        }
+    }
     if (mem.isNotEmpty()) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FkChip("Alle ${mem.size}", active = filter == null) { filter = null }
@@ -432,7 +459,7 @@ private fun MemoryPage(vm: ChatViewModel) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(e.text, fontSize = 15.sp, color = if (e.active) FK.Text else FK.Muted, maxLines = 6, overflow = TextOverflow.Ellipsis)
-                                    Text(if (e.active) c.label else c.label + " · aus", fontSize = 12.sp, color = FK.Muted)
+                                    Text(c.label + (if (e.auto) " · automatisch" else "") + (if (e.active) "" else " · aus"), fontSize = 12.sp, color = FK.Muted)
                                 }
                                 Spacer(Modifier.width(10.dp))
                                 FkToggle(e.active, { on -> vm.setMemoryActive(e.id, on) })

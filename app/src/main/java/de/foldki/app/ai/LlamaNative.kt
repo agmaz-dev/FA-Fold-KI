@@ -20,6 +20,6 @@ object LlamaNative {
     @JvmStatic external fun nativeUnload()
     @JvmStatic external fun nativeGenerate(
         roles: Array<String>, contents: Array<String>, maxTokens: Int, temp: Float, topK: Int, topP: Float,
-        think: Boolean, cb: TokenCallback,
+        think: Boolean, thinkBudget: Int, cb: TokenCallback,
     ): String
 }

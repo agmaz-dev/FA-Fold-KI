@@ -20,6 +20,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.produce
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -207,6 +209,52 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setMemoryActive(id: String, on: Boolean) { memory.setActive(id, on); _memories.value = memory.all() }
     fun removeMemory(id: String) { memory.remove(id); _memories.value = memory.all() }
+
+    private val _autoLearn = MutableStateFlow(settings.autoLearn)
+    /** "Automatisch lernen" (default on). */
+    val autoLearn: StateFlow<Boolean> = _autoLearn.asStateFlow()
+    fun setAutoLearn(on: Boolean) { settings.autoLearn = on; _autoLearn.value = on }
+
+    /** Writes all entries and the flag as readable JSON to the file the user picked (off the main thread). [done] gets a German message. */
+    fun exportMemory(uri: android.net.Uri, done: (String) -> Unit) {
+        viewModelScope.launch {
+            val msg = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val json = memory.exportJson(settings.autoLearn)
+                    getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                        ?: error("Datei konnte nicht geöffnet werden.")
+                    "${memory.all().size} Einträge exportiert."
+                }.getOrElse { "Export fehlgeschlagen: ${it.message ?: it.javaClass.simpleName}" }
+            }
+            done(msg)
+        }
+    }
+
+    /** Reads a memory file (off the main thread), validates it and merges it. Invalid file: nothing changes. */
+    fun importMemory(uri: android.net.Uri, done: (String) -> Unit) {
+        viewModelScope.launch {
+            val msg = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val bytes = getApplication<Application>().contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?: throw de.foldki.app.data.MemoryStore.InvalidImport("Datei konnte nicht geöffnet werden.")
+                    if (bytes.size > 2_000_000) throw de.foldki.app.data.MemoryStore.InvalidImport("Die Datei ist zu groß für eine Gedächtnis-Datei.")
+                    val r = memory.merge(de.foldki.app.data.MemoryStore.parseImport(String(bytes, Charsets.UTF_8)))
+                    _memories.value = memory.all()
+                    "${r.imported} Einträge importiert, ${r.duplicates} doppelt."
+                } catch (e: de.foldki.app.data.MemoryStore.InvalidImport) {
+                    "Import nicht möglich: ${e.message}"
+                } catch (e: Exception) {
+                    "Import fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}"
+                }
+            }
+            done(msg)
+        }
+    }
+
+    /** Background learning from a correction; cancelled when a new message is sent. */
+    private var extractJob: Job? = null
+    /** Entry written after the last correction (conversation id to entry id); removed if the user objects again. */
+    private var lastCorrection: Pair<String, String>? = null
     /** App in the background or memory is low: free the model's memory (it loads again on the next question). */
     fun onBackground() { if (!llmGenerating) llm.close() }
 
@@ -537,7 +585,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
-    fun stop() { job?.cancel(); job = null; llm.stop(); _ui.update { it.copy(generating = false, thinking = false) } }
+    fun stop() { job?.cancel(); job = null; extractJob?.cancel(); llm.stop(); _ui.update { it.copy(generating = false, thinking = false) } }
 
     /** [voice] = asked in voice mode: answer short and speakable. */
     fun send(text: String, voice: Boolean = false) {
@@ -563,10 +611,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true ||
             (hasLetterInChat && REPLY_INTENT.containsMatchIn(prompt) && !JUST_READ.containsMatchIn(prompt))
-        // Memory, fully automatic (no dialog): "Merk dir …" and statements about the user ("Ich heiße …") are saved right away as an
-        // active entry (category Persönlich). The notice is informational; the user can edit, switch off or delete it in the settings.
-        val learned = de.foldki.app.data.MemoryStore.factsIn(prompt).map { de.foldki.app.data.MemoryStore.fromChat(it) }
-            .filter { memory.add(it, de.foldki.app.data.MemoryCategory.PERSONAL) != null }
+        // Correction: the user says the previous answer was wrong -> one hint line + thinking for this turn; the lesson is
+        // written in the background after the answer (extractJob).
+        val prior = history.dropLast(1)
+        val prevAnswer = prior.lastOrNull { it.role == Role.ASSISTANT && !it.isError && it.text.isNotBlank() }
+        val prevQuestion = prevAnswer?.let { a -> prior.lastOrNull { it.role == Role.USER && prior.indexOf(it) < prior.indexOf(a) } }
+        val correcting = prevAnswer != null && prevQuestion != null && de.foldki.app.data.Corrections.isSignal(prompt)
+        // The user objects again: the lesson saved after the last correction was wrong too -> remove it.
+        lastCorrection?.let { (cid, eid) -> if (correcting && cid == conv.id) { memory.remove(eid); _memories.value = memory.all() } }
+        lastCorrection = null
+        val prevExtract = extractJob
+        prevExtract?.cancel()
+        extractJob = null
+        // Memory, fully automatic (no dialog): "Merk dir …" and statements about the user ("Ich heiße …") are saved right away
+        // as an active entry (category Persönlich), at most 2 per turn (a correction counts too). The notice is informational;
+        // the user can edit, switch off or delete every entry in the settings.
+        val learned = if (!settings.autoLearn) emptyList() else
+            de.foldki.app.data.MemoryStore.factsIn(prompt).take(if (correcting) 1 else 2)
+                .map { de.foldki.app.data.MemoryStore.fromChat(it) }
+                .filter { memory.add(it, de.foldki.app.data.MemoryCategory.PERSONAL, auto = true) != null }
         if (learned.isNotEmpty()) {
             _memories.value = memory.all()
             _ui.update { it.copy(notice = "Gemerkt: ${learned.joinToString("; ")}") }
@@ -578,11 +641,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         var logError: String? = null
         job = viewModelScope.launch {
             try {
+                prevExtract?.join() // a cancelled background extraction must be over before this answer starts
                 // Like FA-PDF: the AI reads a new letter once (date, sender, case number, deadline, suggestions).
                 analyzeDocs(conv.id, history.flatMap { it.attachments }, engine)
                 val history = _ui.value.conversations.firstOrNull { it.id == conv.id }?.messages?.dropLast(1) ?: history
                 // System message = the user's own instruction + his ACTIVE memory entries (empty = no system message).
-                val localSystem = de.foldki.app.data.MemoryStore.systemMessage(settings.systemPrompt, memory.all())
+                val localSystem = de.foldki.app.data.MemoryStore.systemMessage(settings.systemPrompt, memory.all(), prompt)
                 logSystem = localSystem
                 logHistory = history.size
                 if (isGitHubTask(prompt, history)) {
@@ -610,7 +674,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val raw = StringBuilder()
                     val open = java.util.concurrent.atomic.AtomicBoolean(false)
                     var shown = ""
-                    llm.reply(localSystem, history, web) { open.set(it) }.collect { delta ->
+                    llm.reply(localSystem, history, web, correction = correcting) { open.set(it) }.collect { delta ->
                         raw.append(delta)
                         val sp = ThinkParser.split(raw.toString(), open.get(), finished = false)
                         if (sp.answer != shown || sp.thinking != _ui.value.thinking) {
@@ -626,6 +690,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(thinking = false) }
                 if (problem != null) editMessage(conv.id, botMsg.id) { it.copy(text = problem) }
                 finished = true
+                // After the (re-thought) answer: write the lesson in the background (never blocks the answer).
+                if (correcting && problem == null && settings.autoLearn) learnCorrection(conv.id, botMsg.id, prevQuestion!!.text, prevAnswer!!.text, prompt)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -652,6 +718,25 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 if (job == null || job === coroutineContext[Job]) _ui.update { it.copy(generating = false, thinking = false) }
                 persist()
             }
+        }
+    }
+
+    /**
+     * Background: one short model call (no thinking, internal prompt [de.foldki.app.data.Corrections.extractionPrompt]) turns
+     * question + wrong answer + correction (+ the corrected answer) into one memory entry, category "Rätsel & Logik".
+     */
+    private fun learnCorrection(convId: String, botId: String, question: String, wrong: String, userMsg: String) {
+        val answer = _ui.value.conversations.firstOrNull { it.id == convId }?.messages?.firstOrNull { it.id == botId }?.text.orEmpty()
+        val newAnswer = if (de.foldki.app.data.Corrections.givesAnswer(userMsg)) "" else DocumentParser.display(answer)
+        extractJob = viewModelScope.launch {
+            val line = runCatching {
+                withModel { llm.correctionLine(question, DocumentParser.display(wrong), userMsg, newAnswer) }.first.orEmpty()
+            }.getOrDefault("")
+            if (line.isBlank() || !isActive) return@launch
+            val e = memory.add(line, de.foldki.app.data.MemoryCategory.PUZZLE, auto = true) ?: return@launch
+            _memories.value = memory.all()
+            lastCorrection = convId to e.id
+            _ui.update { it.copy(notice = "Gemerkt: $line") }
         }
     }
 
