@@ -13,7 +13,7 @@ git show 263c08e:app/src/main/java/de/foldki/app/data/MemoryStore.kt       # pro
 git checkout 263c08e -- <datei>                                            # eine Datei zurückholen
 ```
 
-Eingabestelle: Die Systemanweisung wird nur noch **im Chat** eingegeben (Symbol „Anweisungen an die KI“ links neben dem Mikrofon im Eingabefeld, neben „Web“, gefaltet und aufgeklappt gleich). Das Feld „Systemanweisung“ und „Auf Standard zurücksetzen“ in den Einstellungen (`SettingsScreen.kt` bei `263c08e`: Zeilen 82, 222–223, 350–358) wurde entfernt.
+Eingabestelle: Die Systemanweisung wird in den **Einstellungen** eingegeben, an der ursprünglichen Stelle (Gruppe „Allgemein“, erste Zeile, wie bei `263c08e` Zeile 222), jetzt beschriftet „Anweisungen an die KI“. Untertitel: „Leer“ oder eine kurze Vorschau des Textes. Antippen öffnet den Dialog „Anweisungen an die KI“ (`InstructionsDialog` in `SettingsScreen.kt`). Gespeichert wird genau das Eingegebene in `Settings.systemPrompt`; leer = keine Systemnachricht. Im Chat gibt es dafür kein Symbol. Entfernt wurde nur der alte Standardtext, der Zurücksetzen-Button „Auf Standard zurücksetzen“ und die eigene Seite „Systemanweisung“ (`SettingsScreen.kt` bei `263c08e`: Zeilen 82, 222–223, 350–358); der Dialog ersetzt die Seite.
 
 Die Zeilennummern unten gelten nur für `263c08e`, nicht für den aktuellen Stand.
 
@@ -354,10 +354,10 @@ Antworte kurz und natürlich gesprochen (meist 1 bis 4 Sätze), ohne Listen, Tab
         generate(all, MAX_ANSWER_TOKENS, think = true, precise = precise, onThinkOpen = onThinkOpen).collect { emit(it) }
 ```
 
-## 22. Einstellungen: Feld „Systemanweisung“ (Zeile, Seite, Zurücksetzen-Button)
+## 22. Einstellungen: alte Zeile „Systemanweisung“ und Seite mit Zurücksetzen-Button
 
-- Datei: `app/src/main/java/de/foldki/app/ui/SettingsScreen.kt`, Zeilen 350–358 (bei `263c08e`)
-- Grund: Die Eingabe wanderte ins Chatfenster („Anweisungen an die KI“), damit es nur eine Stelle gibt. Die Zeile in der Übersicht (222–223) und der Zurücksetzen-Button („Auf Standard zurücksetzen“, setzte DEFAULT_SYSTEM) sind weg.
+- Datei: `app/src/main/java/de/foldki/app/ui/SettingsScreen.kt`, Zeilen 222–223 und 350–358 (bei `263c08e`)
+- Grund: Der Standardtext ist weg, deshalb entfällt „Standard“/„Auf Standard zurücksetzen“ (setzte `DEFAULT_SYSTEM`). Die Zeile selbst steht wieder an derselben Stelle, jetzt als „Anweisungen an die KI“ mit Dialog statt eigener Seite.
 
 ```kotlin
         SettingRow("Systemanweisung", if (system.trim() == Settings.DEFAULT_SYSTEM.trim()) "Standard" else "Eigene Anweisung",

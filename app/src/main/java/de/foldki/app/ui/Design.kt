@@ -142,11 +142,11 @@ fun Spark(size: Dp = 34.dp, color: Color = FK.Accent) {
     }
 }
 
-/** Round outlined 40-dp button (+, mic). */
+/** Round outlined 40-dp button (+, mic, web search). */
 @Composable
-fun RoundOutline(onClick: () -> Unit, content: @Composable () -> Unit) {
+fun RoundOutline(onClick: () -> Unit, borderColor: Color = FK.Line, content: @Composable () -> Unit) {
     Box(
-        Modifier.size(40.dp).clip(CircleShape).border(1.dp, FK.Line, CircleShape).clickable(onClick = onClick),
+        Modifier.size(40.dp).clip(CircleShape).border(1.dp, borderColor, CircleShape).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { content() }
 }

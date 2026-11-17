@@ -47,6 +47,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -78,6 +82,8 @@ import de.foldki.app.voice.Supertonic
  */
 @Composable
 fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
+    var system by remember { mutableStateOf(vm.settings.systemPrompt) }
+    var instrOpen by remember { mutableStateOf(false) }
     var ghToken by remember { mutableStateOf(vm.githubToken) }
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
     var stVoice by remember { mutableStateOf(vm.settings.stVoice) }
@@ -97,6 +103,11 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
 
     val back: () -> Unit = { saveAll(); if (page == "hf") page = "models" else if (page != null) page = null else onBack() }
     BackHandler { back() }
+    if (instrOpen) InstructionsDialog(
+        initial = system,
+        onSave = { v -> vm.saveSettings(v); system = v; instrOpen = false },
+        onDismiss = { instrOpen = false },
+    )
 
     val title = when (page) {
         "models" -> "KI-Modelle"; "hf" -> "Hugging Face"; "github" -> "GitHub"
@@ -121,7 +132,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                         .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp),
                 ) {
                     when (page) {
-                        null -> Overview(vm, ui, ghToken, stReady, stVoice, rate) { page = it }
+                        null -> Overview(vm, ui, ghToken, stReady, stVoice, rate, system) { if (it == "system") instrOpen = true else page = it }
                         "models" -> Group { Column(Modifier.padding(16.dp)) { ModelSettings(vm, ui, openBrowser = { page = "hf" }) } }
                                                 "github" -> GitHubPage(vm, ghToken, { ghToken = it })
                         "sender" -> Group { Column(Modifier.padding(12.dp)) { SenderProfilesList(vm, onEdit = { editProfile = it }) } }
@@ -139,7 +150,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
 @Composable
 private fun Overview(
     vm: ChatViewModel, ui: UiState, ghToken: String, stReady: Boolean,
-    stVoice: String, rate: Float, open: (String) -> Unit,
+    stVoice: String, rate: Float, system: String, open: (String) -> Unit,
 ) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     vm.sigVersion.collectAsStateWithLifecycle().value
@@ -216,6 +227,9 @@ private fun Overview(
 
     SectionLabel("Allgemein")
     Group {
+        SettingRow("Anweisungen an die KI", systemPreview(system),
+            leading = { Tile(Icons.Default.Edit, FK.T6) }, onClick = { open("system") })
+        GroupDivider()
         SettingRow("Gedächtnis", if (mem.isEmpty()) "noch nichts gemerkt" else "${mem.size} Einträge",
             leading = { Tile(Icons.Default.Psychology, FK.T6) }, onClick = { open("memory") })
         GroupDivider()
@@ -339,6 +353,42 @@ private fun VoicePage(
         Spacer(Modifier.height(14.dp))
         FkButton("Neu laden / reparieren", ghost = true) { vm.setupVoice() }
     }
+}
+
+/** Subtitle of the "Anweisungen an die KI" row: "Leer" or a short preview of the user's own text. */
+private fun systemPreview(system: String): String {
+    val t = system.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    return if (system.isBlank()) "Leer" else if (t.length > 40) t.take(40) + "…" else t.ifEmpty { "Eigene Anweisung" }
+}
+
+/** "Anweisungen an die KI": the user's own system instruction, empty by default. Sent as the system message exactly as typed. */
+@Composable
+fun InstructionsDialog(initial: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var value by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = FK.Surface,
+        title = { Text("Anweisungen an die KI", color = FK.Text, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                Text("Gilt für alle Chats und wird genau so als Systemanweisung gesendet. Leer = keine Anweisung.", fontSize = 13.sp, color = FK.Muted)
+                Spacer(Modifier.height(10.dp))
+                FkField("Anweisung an die KI", value, { value = it }, minLines = 6, modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()))
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(value) }, modifier = Modifier.heightIn(min = 48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = FK.Accent, contentColor = FK.OnAccent),
+            ) { Text("Speichern", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = {
+            Row {
+                if (value.isNotEmpty()) TextButton(onClick = { value = "" }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Leeren", color = FK.Muted) }
+                TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Abbrechen", color = FK.Muted) }
+            }
+        },
+    )
 }
 
 @Composable
