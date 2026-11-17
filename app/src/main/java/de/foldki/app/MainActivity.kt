@@ -14,7 +14,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         de.foldki.app.data.DebugLog.init(applicationContext)
-        enableEdgeToEdge()
+        // Always the dark design: light status/navigation bar icons.
+        enableEdgeToEdge(
+            statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         setContent { FoldTheme { ChatApp(vm) } }
     }
 

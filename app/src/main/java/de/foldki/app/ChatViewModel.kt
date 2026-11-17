@@ -519,8 +519,32 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     // ---- GitHub (Claude with tools; every change needs the user's approval) ----
     val githubToken: String get() = settings.githubToken
     fun saveGitHubToken(token: String) {
+        if (token.trim() != settings.githubToken) { settings.githubLogin = ""; _githubLogin.value = "" }
         settings.githubToken = token
         _ui.update { it.copy(githubSet = token.isNotBlank()) }
+    }
+
+    /** GitHub account name after "Verbinden & prüfen" ("" = not checked / not connected). */
+    private val _githubLogin = MutableStateFlow(settings.githubLogin)
+    val githubLogin: StateFlow<String> = _githubLogin.asStateFlow()
+    private val _githubChecking = MutableStateFlow(false)
+    val githubChecking: StateFlow<Boolean> = _githubChecking.asStateFlow()
+
+    /** Saves the token and asks GitHub who it belongs to. */
+    fun checkGitHub(token: String) {
+        saveGitHubToken(token)
+        if (token.isBlank()) { _githubLogin.value = ""; return }
+        _githubChecking.value = true
+        viewModelScope.launch {
+            val r = runCatching {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    org.json.JSONObject(de.foldki.app.github.GitHubApi(token.trim()).get("/user")).getString("login")
+                }
+            }
+            _githubChecking.value = false
+            r.onSuccess { login -> settings.githubLogin = login; _githubLogin.value = login; notify("Verbunden als $login") }
+                .onFailure { e -> settings.githubLogin = ""; _githubLogin.value = ""; notify("GitHub: Token wurde nicht angenommen (${e.message?.take(80)})") }
+        }
     }
 
     private var approvalAnswer: kotlinx.coroutines.CompletableDeferred<Boolean>? = null

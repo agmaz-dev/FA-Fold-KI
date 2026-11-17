@@ -16,6 +16,9 @@
 ## Zoom (gilt für jede Zoom-Funktion)
 - Zoomen immer dort, wo die Finger sind (Mittelpunkt zwischen den zwei Fingern), nicht nur in die Bildmitte. Gezoomt muss man überall hin schieben können (links, rechts, oben, unten). Doppeltipp zoomt an der getippten Stelle hinein bzw. wieder heraus. Referenz: `ui/PdfPreview.kt`.
 
+## Design (ab 3.0)
+- Immer das dunkle Fold-KI-Design: Farben/Bausteine in `ui/Theme.kt` (`FK`) und `ui/Design.kt` (Tile, Group, SettingRow, Tag, FkToggle, FkChip, FkButton), Schrift Inter (`res/font`). Neue Bildschirme nur mit diesen Bausteinen bauen, damit alles gleich aussieht.
+
 ## Allgemein
 - Antworten und App-Texte auf Deutsch.
 

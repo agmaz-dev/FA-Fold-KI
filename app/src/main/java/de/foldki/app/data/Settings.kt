@@ -25,6 +25,11 @@ class Settings(context: Context) {
         get() = prefs.getString("github_token", "") ?: ""
         set(v) = prefs.edit().putString("github_token", v.trim()).apply()
 
+    /** Account name confirmed by "Verbinden & prüfen". */
+    var githubLogin: String
+        get() = prefs.getString("github_login", "") ?: ""
+        set(v) = prefs.edit().putString("github_login", v).apply()
+
     var claudeModel: String
         get() = prefs.getString("claude_model", DEFAULT_MODEL) ?: DEFAULT_MODEL
         set(v) = prefs.edit().putString("claude_model", v).apply()
