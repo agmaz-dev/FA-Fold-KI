@@ -12,7 +12,7 @@ import java.util.Locale
 /**
  * Error report: what the AI got and answered, which model answered, timings and errors (also crashes).
  * Stays on the phone in a small file; only leaves the phone when the user taps "Fehlerbericht teilen".
- * The Claude API key is never written.
+ * No tokens or keys are ever written.
  */
 object DebugLog {
     private const val MAX_BYTES = 300_000L
@@ -61,7 +61,7 @@ object DebugLog {
 
     /** The whole report as text (header with version and device + all entries). */
     fun text(appVersion: String): String = buildString {
-        append("Fold KI ").append(appVersion).append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
+        append("FA Fold KI ").append(appVersion).append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
         append(" · Android ").append(Build.VERSION.RELEASE).append("\n\n")
         append(runCatching { file?.readText() }.getOrNull().orEmpty().ifBlank { "(noch keine Einträge)" })
     }
@@ -69,7 +69,7 @@ object DebugLog {
     /** Copies the report to the clipboard, so it can simply be pasted into a chat. */
     fun copy(context: Context, appVersion: String) {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        cm.setPrimaryClip(android.content.ClipData.newPlainText("Fold KI Fehlerbericht", text(appVersion)))
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("FA Fold KI Fehlerbericht", text(appVersion)))
     }
 
     /** Opens Android's share sheet with the report as a text file. */
@@ -81,7 +81,7 @@ object DebugLog {
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "Fold KI Fehlerbericht")
+            putExtra(Intent.EXTRA_SUBJECT, "FA Fold KI Fehlerbericht")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(send, "Fehlerbericht teilen").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

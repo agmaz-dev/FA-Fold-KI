@@ -22,7 +22,7 @@ class MainActivity : ComponentActivity() {
         setContent { FoldTheme { ChatApp(vm) } }
     }
 
-    /** In the background or low on memory: free the optional Gemma model (Nano is not affected). */
+    /** In the background or low on memory: free the local model (it loads again with the next question). */
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) vm.onBackground()

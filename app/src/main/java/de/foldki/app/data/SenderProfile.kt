@@ -84,7 +84,7 @@ data class SenderProfile(
             return SenderProfile(label = "Privat", name = name, street = street, zipCity = zip, phone = phone, email = email, extra = rest.joinToString("\n"))
         }
 
-        /** Block for Nano/Claude when a letter is written; empty fields are left out. Never contains the signature image. */
+        /** Block for the local model when a letter is written; empty fields are left out. Never contains the signature image. */
         fun promptBlock(p: SenderProfile): String = buildString {
             append("Absender (aktiv):\n")
             listOf(p.name, p.street, p.zipCity, p.phone, p.email, p.extra).filter { it.isNotBlank() }.forEach { append(it.trim()).append("\n") }

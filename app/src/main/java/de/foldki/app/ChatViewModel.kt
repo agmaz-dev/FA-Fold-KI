@@ -3,10 +3,9 @@ package de.foldki.app
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import de.foldki.app.ai.ClaudeEngine
-import de.foldki.app.ai.GemmaEngine
+import de.foldki.app.ai.LlamaEngine
 import de.foldki.app.ai.LocalModelManager
-import de.foldki.app.ai.NanoEngine
+import de.foldki.app.ai.ThinkParser
 import de.foldki.app.data.Attachment
 import de.foldki.app.data.Attachments
 import de.foldki.app.data.ChatMessage
@@ -32,26 +31,26 @@ import kotlinx.coroutines.launch
 data class UiState(
     val conversations: List<Conversation> = emptyList(),
     val currentId: String? = null,
-    val engine: Engine = Engine.NANO,
-    val model: String = Settings.DEFAULT_MODEL,
-    val apiKeySet: Boolean = false,
+    val engine: Engine = Engine.LOCAL,
     val generating: Boolean = false,
-    val nanoStatus: String = "Prüfe Gemini Nano…",
-    val nanoReady: Boolean = false,
-    val nanoDownloadable: Boolean = false,
     val pending: List<Attachment> = emptyList(),
     val importing: Boolean = false,
     val notice: String? = null,
     val webSearch: Boolean = false,
-    /** Optional Gemma 4 E2B: download state and the switch "Gemma verwenden". */
-    val gemma: LocalModelManager.State = LocalModelManager.State.NotDownloaded,
-    val gemmaEnabled: Boolean = false,
+    /** Local GGUF models (llama.cpp): running download/import, downloaded files, the chosen one. */
+    val modelOp: LocalModelManager.State = LocalModelManager.State.Idle,
+    val localModels: List<LocalModelManager.LocalModel> = emptyList(),
+    val activeModel: String? = null,
+    /** The model of the current answer is still thinking (text before </think>). */
+    val thinking: Boolean = false,
     /** A GitHub change waiting for the user's "Freigeben" / "Ablehnen". */
     val approval: Approval? = null,
     val githubSet: Boolean = false,
 ) {
-    /** Gemma answers instead of Nano (Nano stays the fallback). */
-    val gemmaActive: Boolean get() = engine == Engine.NANO && gemmaEnabled && gemma is LocalModelManager.State.Ready
+    /** A model is downloaded and chosen. */
+    val modelReady: Boolean get() = activeModel != null && localModels.any { it.file == activeModel }
+    /** Display name of the chosen model ("Kein Modell" if none). */
+    val modelName: String get() = localModels.firstOrNull { it.file == activeModel }?.name ?: "Kein Modell"
     val current: Conversation? get() = conversations.firstOrNull { it.id == currentId }
 }
 
@@ -60,7 +59,7 @@ data class Approval(val title: String, val details: String)
 /** Clearly a GitHub task (without a token the app explains how to connect). */
 private val GITHUB_STRONG = Regex("github|\\brepo(s|sitor(y|ys|ies|ium|ien))?\\b|pull ?request|\\bcommit|\\bapk\\b", RegexOption.IGNORE_CASE)
 
-/** GitHub tasks (go to Gemma with GitHub tools when a token is set). */
+/** GitHub tasks (go to the local model with GitHub tools when a token is set). */
 private val GITHUB_WORDS = Regex(
     "github|\\brepo(s|sitor(y|ys|ies|ium|ien))?\\b|pull ?request|\\bcommit|\\bbranch|workflow|\\bapk\\b|programmier|quellcode|\\bcode\\b|" +
         "\\bbuild\\b|bauen? (die|eine|mir eine) app|app bauen|kotlin|gradle",
@@ -95,12 +94,10 @@ Antworte kurz und natürlich gesprochen (meist 1 bis 4 Sätze), ohne Listen, Tab
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ChatStore(app)
     val settings = Settings(app)
-    private val nano = NanoEngine()
-    private val claude = ClaudeEngine()
     val models = LocalModelManager(app)
-    private val gemma = GemmaEngine(app)
-    private val gemmaBusy = AtomicInteger(0)
-    private var gemmaGenerating = false
+    private val llm = LlamaEngine(app)
+    private val llmBusy = AtomicInteger(0)
+    private var llmGenerating = false
     private var idleJob: Job? = null
     val attachments = Attachments(app)
     val voice = de.foldki.app.voice.VoiceController(app).apply {
@@ -139,70 +136,69 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         voice.supertonicVoice = stVoice; voice.rate = rate
     }
 
-    override fun onCleared() { voice.release(); gemma.close() }
+    override fun onCleared() { voice.release(); llm.close() }
 
     private var job: Job? = null
 
     private val _ui = MutableStateFlow(
         UiState(
             conversations = store.load(),
-            engine = Engine.NANO, // Claude is no longer offered: always on the phone
-            model = settings.claudeModel,
-            apiKeySet = settings.apiKey.isNotBlank(),
+            engine = Engine.LOCAL, // the only AI: the local GGUF model
             githubSet = settings.githubToken.isNotBlank(),
             webSearch = settings.webSearch,
-            gemmaEnabled = settings.gemmaEnabled,
-            notice = gemmaCrashCheck(),
+            notice = llmCrashCheck(),
         )
     )
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
     init {
-        checkNano()
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { de.foldki.app.export.PdfExporter.cleanup(app) } }
-        models.beforeDelete = { gemma.close() }
+        models.beforeDelete = { f -> if (llm.loadedPath == f.absolutePath) { if (llmGenerating) stop(); llm.close() } }
+        viewModelScope.launch { models.state.collect { st -> _ui.update { it.copy(modelOp = st) } } }
+        viewModelScope.launch { models.models.collect { list -> _ui.update { it.copy(localModels = list) } } }
         viewModelScope.launch {
-            models.state.collect { st ->
-                _ui.update { it.copy(gemma = st) }
-                // Model gone (deleted/failed): the switch goes off, Nano answers again.
-                if (st is LocalModelManager.State.NotDownloaded || st is LocalModelManager.State.Failed) {
-                    if (settings.gemmaEnabled) settings.gemmaEnabled = false
-                    _ui.update { it.copy(gemmaEnabled = false) }
-                }
+            models.active.collect { a ->
+                _ui.update { it.copy(activeModel = a) }
+                // Another model chosen: free the old one, the new one loads with the next question.
+                if (llm.loadedPath != null && llm.loadedPath != models.activeFile?.absolutePath && !llmGenerating) llm.close()
             }
         }
-        // Too hot: free Gemma's memory, Nano answers.
+        // Too hot: free the model's memory (it loads again with the next question).
         if (android.os.Build.VERSION.SDK_INT >= 29) runCatching {
             power.addThermalStatusListener(app.mainExecutor) { status ->
-                if (status >= android.os.PowerManager.THERMAL_STATUS_SEVERE && !gemmaGenerating) gemma.close()
+                if (status >= android.os.PowerManager.THERMAL_STATUS_SEVERE && !llmGenerating) llm.close()
             }
         }
     }
 
     private val power get() = getApplication<Application>().getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
 
-    /** Crash guard: Gemma was still loading/answering when the app died last time -> switch off, Nano again. */
-    private fun gemmaCrashCheck(): String? {
-        if (!settings.gemmaLoading) return null
-        settings.gemmaLoading = false
-        settings.gemmaCrashCount = settings.gemmaCrashCount + 1
-        settings.gemmaEnabled = false
-        if (settings.gemmaAttempt == "GPU") settings.gemmaBackend = "CPU" // next try goes straight to the CPU
-        return "Gemma hat die App beendet – Nano ist wieder aktiv"
+    /** Crash guard: the model was still loading/answering when the app died last time -> do not load it automatically. */
+    private fun llmCrashCheck(): String? {
+        if (!settings.llmLoading) return null
+        settings.llmLoading = false
+        settings.llmCrashed = settings.llmAttempt
+        return "Das Modell hat die App beendet (zu wenig Arbeitsspeicher?) – bitte unter Einstellungen → KI-Modelle prüfen"
     }
 
     private fun tooHot(): Boolean = android.os.Build.VERSION.SDK_INT >= 29 &&
         runCatching { power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_SEVERE }.getOrDefault(false)
 
-    fun downloadGemma() = models.download()
-
-    /** Test switch: Gemma on the CPU instead of the GPU (slower; GPU results can be inexact on some devices). */
-    fun setGemmaCpu(cpu: Boolean) {
-        if (gemmaGenerating) stop()
-        settings.gemmaBackend = if (cpu) "CPU" else "GPU"
-        gemma.close() // next answer loads with the chosen backend
-        de.foldki.app.data.DebugLog.write("Gemma-Rechenart umgestellt auf ${settings.gemmaBackend}")
+    // ---- Local models (GGUF, llama.cpp) ----
+    /** Download one .gguf file from Hugging Face (null = started, else error shown as notice). */
+    fun downloadModel(f: de.foldki.app.ai.HfModels.GgufFile) { models.download(f)?.let { notify(it) } }
+    fun cancelModelOp() { if (models.state.value is LocalModelManager.State.Importing) models.cancelImport() else models.cancel() }
+    fun importModel(uri: android.net.Uri) = models.import(uri)
+    fun selectModel(file: String) {
+        if (llmGenerating) stop()
+        if (settings.llmCrashed == file) settings.llmCrashed = "" // the user picked it again on purpose
+        models.setActive(file)
     }
+    fun deleteModel(file: String) {
+        if (llmGenerating && llm.loadedPath == models.fileOf(file).absolutePath) stop()
+        models.delete(file)
+    }
+    fun clearModelError() = models.clearError()
 
     // ---- Long-term memory (on-device only) ----
     val memory = de.foldki.app.data.MemoryStore(app)
@@ -210,119 +206,64 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     val memories: StateFlow<List<String>> = _memories.asStateFlow()
     fun addMemory(fact: String) { memory.add(fact); _memories.value = memory.all() }
     fun removeMemory(index: Int) { memory.remove(index); _memories.value = memory.all() }
-    fun cancelGemma() = models.cancel()
-    fun deleteGemma() {
-        if (gemmaGenerating) stop()
-        settings.gemmaEnabled = false
-        _ui.update { it.copy(gemmaEnabled = false) }
-        models.delete()
-    }
-
-    fun setGemmaEnabled(on: Boolean) {
-        val v = on && models.isReady
-        settings.gemmaEnabled = v
-        if (v) settings.gemmaCrashCount = 0
-        if (!v) gemma.close()
-        _ui.update { it.copy(gemmaEnabled = v) }
-    }
-
-    /** App in the background or memory is low: free Gemma's memory (it loads again on the next question). */
-    fun onBackground() { if (!gemmaGenerating) gemma.close() }
+    /** App in the background or memory is low: free the model's memory (it loads again on the next question). */
+    fun onBackground() { if (!llmGenerating) llm.close() }
 
     /** Android is short of memory (app in the background): also free the speech recognition model. */
     fun onLowMemory() { voice.trimMemory() }
 
-    private fun gemmaBegin() { if (gemmaBusy.incrementAndGet() == 1) settings.gemmaLoading = true }
-    private fun gemmaEnd() { if (gemmaBusy.decrementAndGet() <= 0) { gemmaBusy.set(0); settings.gemmaLoading = false } }
+    private fun llmBegin() { if (llmBusy.incrementAndGet() == 1) { settings.llmAttempt = models.active.value.orEmpty(); settings.llmLoading = true } }
+    private fun llmEnd() { if (llmBusy.decrementAndGet() <= 0) { llmBusy.set(0); settings.llmLoading = false } }
 
     private fun scheduleIdleUnload() {
         idleJob?.cancel()
-        idleJob = viewModelScope.launch { delay(5 * 60_000L); if (!gemmaGenerating) gemma.close() }
+        idleJob = viewModelScope.launch { delay(5 * 60_000L); if (!llmGenerating) llm.close() }
     }
 
-    /**
-     * Tries Gemma. Returns false if it fails or times out BEFORE the first word (the caller then asks Nano).
-     * Errors after the first word are thrown like with any other engine.
-     */
-    private suspend fun replyWithGemma(convId: String, msgId: String, system: String, history: List<ChatMessage>, web: Boolean): Boolean =
-        runGemma(
-            system, history, web,
-            onStart = { editMessage(convId, msgId) { it.copy(engine = Engine.GEMMA) } },
-            onFail = { editMessage(convId, msgId) { it.copy(engine = Engine.NANO) } },
-        ) { t -> editMessage(convId, msgId) { it.copy(text = it.text + t) } }
-
-    /** Runs Gemma (loading it if needed); false = not available / no first token in time -> caller uses Nano. */
-    /** Loads Gemma if needed (max. 60 s). false = not available (then Nano answers). */
-    private suspend fun ensureGemmaLoaded(): Boolean {
-        if (gemma.isLoaded) return true
-        val d = gemma.loadAsync(models.modelFile.absolutePath, settings.gemmaBackend == "GPU") { b -> settings.gemmaAttempt = b }
-        gemmaBegin(); d.invokeOnCompletion { gemmaEnd() } // stays guarded until the native load really ends
-        val backend = try { withTimeoutOrNull(60_000) { d.await() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) {
-            de.foldki.app.data.DebugLog.write("Gemma Ladefehler: ${e.stackTraceToString().take(1500)}"); null
-        } ?: run { de.foldki.app.data.DebugLog.write("Gemma nicht geladen (Fehler oder > 60 s)"); return false }
-        de.foldki.app.data.DebugLog.write("Gemma geladen · Backend: $backend")
-        if (backend == "CPU" && settings.gemmaBackend == "GPU") settings.gemmaBackend = "CPU"
-        return true
+    /** Text shown when no model is there (chat answer instead of an AI reply). */
+    private fun noModelText(): String = when {
+        models.models.value.isEmpty() -> "Es ist noch kein KI-Modell auf dem Handy. Bitte unter Einstellungen → KI-Modelle ein GGUF-Modell " +
+            "herunterladen (Vorschlag: Qwen3 4B Thinking, 2,5 GB) oder eine eigene .gguf-Datei importieren."
+        else -> "Bitte unter Einstellungen → KI-Modelle ein Modell auswählen."
     }
 
-    private suspend fun runGemma(
-        system: String, history: List<ChatMessage>, web: Boolean,
-        onStart: () -> Unit = {}, onFail: () -> Unit = {}, onText: (String) -> Unit,
-    ): Boolean {
-        if (tooHot()) return false
-        idleJob?.cancel()
-        gemmaBegin()
-        gemmaGenerating = true
-        try {
-            if (!ensureGemmaLoaded()) return false
-            settings.gemmaAttempt = gemma.backendUsed ?: settings.gemmaBackend
-            onStart()
-            return coroutineScope {
-                val ch = produce(capacity = Channel.UNLIMITED) {
-                    try { gemma.reply(system, history, web).collect { send(it) } }
-                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                    catch (e: Throwable) { close(e) }
-                }
-                val first = withTimeoutOrNull(if (web) 45_000 else 30_000) { ch.receiveCatching() }
-                val firstText = first?.getOrNull()
-                if (firstText == null) {
-                    ch.cancel()
-                    onFail()
-                    return@coroutineScope false
-                }
-                onText(firstText)
-                for (t in ch) onText(t)
-                true
+    /** Loads the chosen model if needed (max. 120 s). Returns null if ready, else the reason (German). */
+    private suspend fun ensureLoaded(): String? {
+        val f = models.activeFile ?: return noModelText()
+        if (llm.loadedPath == f.absolutePath) return null
+        if (settings.llmCrashed == f.name) return "Dieses Modell hat die App beim letzten Mal beendet (zu wenig Arbeitsspeicher?). " +
+            "Wähle es unter Einstellungen → KI-Modelle erneut aus, um es nochmal zu versuchen, oder nimm ein kleineres Modell."
+        if (tooHot()) return "Das Handy ist gerade zu heiß. Bitte kurz warten und nochmal fragen."
+        val ramGb = models.totalRam() / 1e9
+        if (ramGb > 0 && de.foldki.app.ai.HfModels.tooBigFor(models.totalRam(), f.length()))
+            de.foldki.app.data.DebugLog.write("Warnung: Modell ${f.name} (${LocalModelManager.gb(f.length())}) ist groß für $ramGb GB RAM")
+        val d = llm.loadAsync(f.absolutePath)
+        llmBegin(); d.invokeOnCompletion { llmEnd() } // stays guarded until the native load really ends
+        return try {
+            withTimeoutOrNull(120_000) { d.await() } ?: run {
+                de.foldki.app.data.DebugLog.write("Modell nicht geladen (> 120 s)"); return "Das Modell lädt zu lange. Bitte nochmal fragen."
             }
+            de.foldki.app.data.DebugLog.write("Modell geladen: ${f.name} · Kontext ${llm.contextSize}")
+            null
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) {
+            de.foldki.app.data.DebugLog.write("Ladefehler: ${e.stackTraceToString().take(1500)}")
+            e.message ?: "Das Modell konnte nicht geladen werden."
+        }
+    }
+
+    /** Runs [block] with the loaded model (crash guard, idle unload). Returns the reason if no model is usable. */
+    private suspend fun <T> withModel(block: suspend () -> T): Pair<T?, String?> {
+        idleJob?.cancel()
+        llmBegin()
+        llmGenerating = true
+        try {
+            ensureLoaded()?.let { return null to it }
+            return block() to null
         } finally {
-            gemmaGenerating = false
-            gemmaEnd()
+            llmGenerating = false
+            llmEnd()
             scheduleIdleUnload()
         }
-    }
-
-    fun checkNano() = viewModelScope.launch {
-        val (text, ready, downloadable) = try {
-            when (nano.state()) {
-                NanoEngine.State.AVAILABLE -> Triple("Gemini Nano bereit (offline)", true, false)
-                NanoEngine.State.DOWNLOADABLE -> Triple("Gemini Nano kann heruntergeladen werden", false, true)
-                NanoEngine.State.DOWNLOADING -> Triple("Gemini Nano wird geladen…", false, false)
-                NanoEngine.State.UNAVAILABLE -> Triple("Gemini Nano ist auf diesem Gerät nicht verfügbar", false, false)
-            }
-        } catch (e: Throwable) {
-            Triple("Gemini Nano nicht verfügbar: ${e.message ?: e.javaClass.simpleName}", false, false)
-        }
-        _ui.update { it.copy(nanoStatus = text, nanoReady = ready, nanoDownloadable = downloadable) }
-    }
-
-    fun downloadNano() = viewModelScope.launch {
-        _ui.update { it.copy(nanoDownloadable = false, nanoStatus = "Download gestartet…") }
-        try {
-            nano.download().collect { line -> _ui.update { it.copy(nanoStatus = line) } }
-        } catch (e: Throwable) {
-            _ui.update { it.copy(nanoStatus = e.message ?: "Download fehlgeschlagen") }
-        }
-        checkNano()
     }
 
     // ---- Tagesstart (daily briefing), only on the device ----
@@ -330,7 +271,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val _brief = MutableStateFlow<de.foldki.app.brief.Briefing?>(null)
     val brief: StateFlow<de.foldki.app.brief.Briefing?> = _brief.asStateFlow()
     private var briefJob: Job? = null
-    /** Nano refused because the app was not in the foreground yet: try the summary again on the next open. */
+    /** Summary could not be written yet: try again on the next open. */
     private var briefRetryAi = false
 
     /** Called when the app comes to the foreground (from the launcher or another app). */
@@ -386,13 +327,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         briefRetryAi = false
         if (b.isEmpty) { _brief.value = b.copy(loading = false); return }
         val summary = try {
-            delay(400) // Nano only answers apps in the foreground
-            nano.brief(de.foldki.app.brief.DailyBriefing.facts(b)).ifBlank { null }
+            // Without a model (or if it cannot load): plain list without AI.
+            withModel { llm.brief(de.foldki.app.brief.DailyBriefing.facts(b)) }.first?.ifBlank { null }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            // Not in the foreground (yet): next open tries again. Otherwise: plain list without AI.
-            if (NanoEngine.errorCode(e) == com.google.mlkit.genai.common.GenAiException.ErrorCode.BACKGROUND_USE_BLOCKED) briefRetryAi = true
             null
         }
         _brief.update { cur -> (cur ?: b).copy(summary = summary, loading = false) }
@@ -405,15 +344,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _brief.update { b -> b?.copy(openItems = b.openItems.map { if (it.id == id) it.copy(done = done) else it }) }
     }
 
-    /** "Als Chat öffnen": always Gemini Nano; the briefing is marked local and never sent to Claude. */
+    /** "Als Chat öffnen": the briefing is marked local (stays on the phone). */
     fun openBriefAsChat() {
         val b = _brief.value ?: return
         stop()
         val conv = Conversation(
             title = "Tagesstart " + b.date,
-            messages = listOf(ChatMessage(role = Role.ASSISTANT, text = de.foldki.app.brief.DailyBriefing.asText(b), engine = Engine.NANO, localOnly = true)),
+            messages = listOf(ChatMessage(role = Role.ASSISTANT, text = de.foldki.app.brief.DailyBriefing.asText(b), engine = Engine.LOCAL, model = _ui.value.modelName, localOnly = true)),
         )
-        setEngine(Engine.NANO)
         upsert(conv)
         _ui.update { it.copy(currentId = conv.id) }
         closeBrief()
@@ -505,8 +443,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(webSearch = on, notice = if (on) "Websuche an" else "Websuche aus") }
     }
 
-    fun setEngine(e: Engine) { settings.engine = e; _ui.update { it.copy(engine = e) } }
-
     fun addAttachment(uri: android.net.Uri, deleteAfter: java.io.File? = null) = viewModelScope.launch {
         _ui.update { it.copy(importing = true) }
         try {
@@ -524,7 +460,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun notify(text: String?) = _ui.update { it.copy(notice = text) }
 
-    // ---- GitHub (Claude with tools; every change needs the user's approval) ----
+    // ---- GitHub (local model with tools; every change needs the user's approval) ----
     val githubToken: String get() = settings.githubToken
     fun saveGitHubToken(token: String) {
         if (token.trim() != settings.githubToken) { settings.githubLogin = ""; _githubLogin.value = "" }
@@ -570,7 +506,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     fun answerApproval(ok: Boolean) { approvalAnswer?.complete(ok) }
 
-    /** GitHub task: Claude with the token's tools, if both keys are there. */
+    /** GitHub task: the local model with the token's tools, if a token is there. */
     private fun isGitHubTask(prompt: String, history: List<ChatMessage>): Boolean {
         if (settings.githubToken.isBlank()) return false
         if (GITHUB_WORDS.containsMatchIn(prompt)) return true
@@ -580,11 +516,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun saveSettings(apiKey: String, model: String, system: String) {
-        settings.apiKey = apiKey
-        settings.claudeModel = model
+    fun saveSettings(system: String) {
         settings.systemPrompt = system.ifBlank { Settings.DEFAULT_SYSTEM }
-        _ui.update { it.copy(model = model, apiKeySet = apiKey.isNotBlank()) }
     }
 
     fun newChat() { stop(); _ui.update { it.copy(currentId = null) } }
@@ -603,7 +536,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
-    fun stop() { job?.cancel(); job = null; _ui.update { it.copy(generating = false) } }
+    fun stop() { job?.cancel(); job = null; llm.stop(); _ui.update { it.copy(generating = false, thinking = false) } }
 
     /** [voice] = asked in voice mode: answer short and speakable. */
     fun send(text: String, voice: Boolean = false) {
@@ -616,7 +549,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         // Create conversation if needed and append user + empty assistant message.
         var conv = _ui.value.current ?: Conversation(title = prompt.take(40))
         val userMsg = ChatMessage(role = Role.USER, text = prompt, attachments = pendingFiles)
-        val botMsg = ChatMessage(role = Role.ASSISTANT, text = "", engine = engine, web = web)
+        val botMsg = ChatMessage(role = Role.ASSISTANT, text = "", engine = engine, web = web, model = _ui.value.modelName)
         conv = conv.copy(messages = conv.messages + userMsg + botMsg, updatedAt = System.currentTimeMillis())
         upsert(conv)
         _ui.update { it.copy(currentId = conv.id, generating = true, pending = emptyList()) }
@@ -649,54 +582,51 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null, history = history) +
                     (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
                     (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
-                // On-device models also get the memory and the topics of the last chats (never sent to Claude).
+                // The local model also gets the memory and the topics of the last chats (all on the phone).
                 val topics = _ui.value.conversations.filter { it.id != conv.id }.take(5).map { it.title }.filter { it.isNotBlank() }
                 val localSystem = system + "\n" + de.foldki.app.data.MemoryStore.promptBlock(memory.all(), topics)
-                logSystem = if (engine == Engine.CLAUDE) system else localSystem
+                logSystem = localSystem
                 logHistory = history.size
                 if (isGitHubTask(prompt, history)) {
-                    // GitHub only with Gemma 4 E2B on the phone (no Claude, no other key). Nano cannot use tools.
-                    editMessage(conv.id, botMsg.id) { it.copy(engine = Engine.GEMMA) }
-                    val ok = models.isReady && !tooHot() && run {
-                        idleJob?.cancel(); gemmaBegin(); gemmaGenerating = true
-                        try {
-                            if (!ensureGemmaLoaded()) false
-                            else {
-                                de.foldki.app.ai.GemmaGitHubAgent(gemma, settings.githubToken).run(
-                                    baseSystem = settings.systemPrompt, question = prompt,
-                                    onText = { t -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + t) } },
-                                    approve = { title, details -> askApproval(title, details) },
-                                )
-                                true
-                            }
-                        } finally { gemmaGenerating = false; gemmaEnd(); scheduleIdleUnload() }
+                    // GitHub with the local model and tools (only the GitHub token is needed).
+                    val (_, problem) = withModel {
+                        de.foldki.app.ai.LocalGitHubAgent(llm, settings.githubToken).run(
+                            baseSystem = settings.systemPrompt, question = prompt,
+                            onText = { t -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + t) } },
+                            approve = { title, details -> askApproval(title, details) },
+                        )
                     }
-                    if (!ok) editMessage(conv.id, botMsg.id) {
-                        it.copy(text = it.text + "Für GitHub-Aufgaben braucht Fold KI Gemma 4 E2B auf dem Handy. " +
-                            "Bitte unter Einstellungen → Gemma 4 E2B laden (einmalig 2,6 GB) und dann nochmal fragen.", engine = Engine.NANO)
-                    }
+                    if (problem != null) editMessage(conv.id, botMsg.id) { it.copy(text = it.text + problem) }
                     finished = true
                     return@launch
                 }
                 if (settings.githubToken.isBlank() && GITHUB_STRONG.containsMatchIn(prompt)) {
                     editMessage(conv.id, botMsg.id) {
                         it.copy(text = "Für GitHub-Aufgaben trag bitte unter Einstellungen → GitHub deinen Token ein und tippe auf „Verbinden & prüfen“. " +
-                            "Danach arbeitet Gemma auf dem Handy mit deinem GitHub – jede Änderung nur mit deiner Freigabe.")
+                            "Danach arbeitet das lokale Modell auf dem Handy mit deinem GitHub – jede Änderung nur mit deiner Freigabe.")
                     }
                     finished = true
                     return@launch
                 }
-                val useGemma = engine == Engine.NANO && _ui.value.gemmaActive
-                val byGemma = useGemma && replyWithGemma(conv.id, botMsg.id, localSystem, history, web)
-                if (useGemma && !byGemma) de.foldki.app.data.DebugLog.write("Gemma nicht verfügbar (Laden/Timeout/Hitze) – Nano antwortet")
-                if (!byGemma) {
-                    if (useGemma) _ui.update { it.copy(notice = "Gemma nicht verfügbar – Antwort von Nano") }
-                    val flow = when (engine) {
-                        Engine.NANO, Engine.GEMMA -> nano.reply(localSystem, history, web)
-                        Engine.CLAUDE -> claude.reply(settings.apiKey, settings.claudeModel, system, history.filterNot { it.localOnly }, web)
+                val (_, problem) = withModel {
+                    val raw = StringBuilder()
+                    val open = java.util.concurrent.atomic.AtomicBoolean(false)
+                    var shown = ""
+                    llm.reply(localSystem, history, web) { open.set(it) }.collect { delta ->
+                        raw.append(delta)
+                        val sp = ThinkParser.split(raw.toString(), open.get(), finished = false)
+                        if (sp.answer != shown || sp.thinking != _ui.value.thinking) {
+                            shown = sp.answer
+                            _ui.update { it.copy(thinking = sp.thinking) }
+                        }
+                        editMessage(conv.id, botMsg.id) { it.copy(text = sp.answer, thoughts = sp.thoughts) }
                     }
-                    flow.collect { delta -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + delta) } }
+                    val end = ThinkParser.split(raw.toString(), open.get(), finished = true)
+                    editMessage(conv.id, botMsg.id) { it.copy(text = end.answer, thoughts = end.thoughts) }
+                    de.foldki.app.data.DebugLog.write("Lokal Statistik: ${llm.lastStats}")
                 }
+                _ui.update { it.copy(thinking = false) }
+                if (problem != null) editMessage(conv.id, botMsg.id) { it.copy(text = problem) }
                 finished = true
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -721,7 +651,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // No PDF from a half-written letter (stopped or failed).
                 if (finished) attachDocumentPdf(conv.id, botMsg.id, wantsLetter, openPreview = !voice)
                 // Only the still-current job may end "generating" (a stopped job must not end the next one).
-                if (job == null || job === coroutineContext[Job]) _ui.update { it.copy(generating = false) }
+                if (job == null || job === coroutineContext[Job]) _ui.update { it.copy(generating = false, thinking = false) }
                 persist()
             }
         }
@@ -772,11 +702,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * FA-PDF style reading: every not yet read letter/photo is read once by the AI (Claude if chosen, else Gemma if on,
-     * else Nano). The result fills gaps of the rule-based LetterMeta and is stored on the attachment.
+     * FA-PDF style reading: every not yet read letter/photo is read once by the local model (without thinking).
+     * The result fills gaps of the rule-based LetterMeta and is stored on the attachment.
      */
     private suspend fun analyzeDocs(convId: String, files: List<Attachment>, engine: Engine) {
-        val todo = files.filter { it.analysis == null && (it.text.isNotBlank() || (engine == Engine.CLAUDE && (it.isPdf || it.isImage))) }
+        val todo = files.filter { it.analysis == null && it.text.isNotBlank() }
+        if (todo.isNotEmpty() && !models.isReady) return
         for (a in todo) {
             _ui.update { it.copy(notice = "Lese das Schreiben …") }
             val raw = withTimeoutOrNull(120_000) { analyzeOne(a, engine) }.orEmpty()
@@ -806,16 +737,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun analyzeOne(a: Attachment, engine: Engine): String = runCatching {
-        val ask = listOf(ChatMessage(role = Role.USER, text = "Lies das angehängte Schreiben und antworte im verlangten Zeilenformat.", attachments = listOf(a)))
-        val sys = de.foldki.app.export.LetterAnalysis.ANALYZE
-        val sb = StringBuilder()
-        when {
-            engine == Engine.CLAUDE && settings.apiKey.isNotBlank() ->
-                claude.reply(settings.apiKey, settings.claudeModel, sys, ask, false).collect { sb.append(it) }
-            engine != Engine.CLAUDE && _ui.value.gemmaActive && runGemma(sys, ask, false) { sb.append(it) } -> Unit
-            else -> { sb.clear(); nano.reply(sys, ask, false).collect { sb.append(it) } }
-        }
-        sb.toString()
+        withModel {
+            llm.analyze(de.foldki.app.export.LetterAnalysis.ANALYZE, "Lies das angehängte Schreiben und antworte im verlangten Zeilenformat.", listOf(a))
+        }.first.orEmpty()
     }.getOrDefault("")
 
     /** The user's own names (never taken as recipient of a reply). */

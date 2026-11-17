@@ -16,11 +16,7 @@ class Settings(context: Context) {
         prefs.edit().putString("recipient_profiles", o.toString()).apply()
     }
 
-    var apiKey: String
-        get() = prefs.getString("api_key", "") ?: ""
-        set(v) = prefs.edit().putString("api_key", v.trim()).apply()
-
-    /** GitHub token (fine-grained or classic) – only on this device; Claude uses it for GitHub tasks after approval. */
+    /** GitHub token (fine-grained or classic) – only on this device; the local model uses it for GitHub tasks after approval. */
     var githubToken: String
         get() = prefs.getString("github_token", "") ?: ""
         set(v) = prefs.edit().putString("github_token", v.trim()).apply()
@@ -29,15 +25,6 @@ class Settings(context: Context) {
     var githubLogin: String
         get() = prefs.getString("github_login", "") ?: ""
         set(v) = prefs.edit().putString("github_login", v).apply()
-
-    var claudeModel: String
-        get() = prefs.getString("claude_model", DEFAULT_MODEL) ?: DEFAULT_MODEL
-        set(v) = prefs.edit().putString("claude_model", v).apply()
-
-    var engine: Engine
-        get() = runCatching { Engine.valueOf(prefs.getString("engine", Engine.NANO.name)!!) }
-            .getOrDefault(Engine.NANO).let { if (it == Engine.GEMMA) Engine.NANO else it }
-        set(v) = prefs.edit().putString("engine", v.name).apply()
 
     var systemPrompt: String
         get() = (prefs.getString("system_prompt", DEFAULT_SYSTEM) ?: DEFAULT_SYSTEM)
@@ -75,32 +62,23 @@ class Settings(context: Context) {
         get() = prefs.getString("sender", "") ?: ""
         set(v) = prefs.edit().putString("sender", v.trim()).apply()
 
-    /** Switch "Gemma verwenden" (only usable when the model is downloaded and verified). Nano stays default + fallback. */
-    var gemmaEnabled: Boolean
-        get() = prefs.getBoolean("gemma_enabled", false)
-        set(v) = prefs.edit().putBoolean("gemma_enabled", v).apply()
-
-    /** "GPU" (try GPU first, then CPU) or "CPU" (GPU failed or crashed before). */
-    var gemmaBackend: String
-        get() = prefs.getString("gemma_backend", "GPU") ?: "GPU"
-        set(v) = prefs.edit().putString("gemma_backend", v).apply()
-
     /**
-     * Crash guard: true while Gemma loads or answers. Written with commit() (synchronously), so it is on disk
-     * before native code runs. If the app finds it still true at the next start, Gemma killed the app.
+     * Crash guard: true while the local model loads or answers. Written with commit() (synchronously), so it is on
+     * disk before native code runs. If the app finds it still true at the next start, the model killed the app.
      */
-    var gemmaLoading: Boolean
-        get() = prefs.getBoolean("gemma_loading", false)
-        set(v) { prefs.edit().putBoolean("gemma_loading", v).commit() }
+    var llmLoading: Boolean
+        get() = prefs.getBoolean("llm_loading", false)
+        set(v) { prefs.edit().putBoolean("llm_loading", v).commit() }
 
-    /** Backend that was being tried when [gemmaLoading] was set ("GPU"/"CPU"). */
-    var gemmaAttempt: String
-        get() = prefs.getString("gemma_attempt", "") ?: ""
-        set(v) { prefs.edit().putString("gemma_attempt", v).commit() }
+    /** File of the model that was loading/answering when [llmLoading] was set. */
+    var llmAttempt: String
+        get() = prefs.getString("llm_attempt", "") ?: ""
+        set(v) { prefs.edit().putString("llm_attempt", v).commit() }
 
-    var gemmaCrashCount: Int
-        get() = prefs.getInt("gemma_crash_count", 0)
-        set(v) { prefs.edit().putInt("gemma_crash_count", v).commit() }
+    /** Model file that crashed the app (not loaded automatically again until the user picks it). */
+    var llmCrashed: String
+        get() = prefs.getString("llm_crashed", "") ?: ""
+        set(v) { prefs.edit().putString("llm_crashed", v).commit() }
 
     /** Daily briefing ("Tagesstart"), fixed window 5–11 o'clock. Off by default, the user switches it on. */
     var dailyBriefEnabled: Boolean
@@ -167,12 +145,6 @@ class Settings(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_MODEL = "claude-opus-5-5"
-        val MODELS = listOf(
-            "claude-opus-5-5" to "Claude Opus 5.5 (stärkstes)",
-            "claude-sonnet-5-5" to "Claude Sonnet 5.5 (schnell)",
-            "claude-haiku-5-5" to "Claude Haiku 5.5 (günstig)",
-        )
         private const val OLD_DEFAULT_SYSTEM =
             "Du bist ein hilfreicher Assistent. Antworte in der Sprache des Nutzers, klar und freundlich."
 

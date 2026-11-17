@@ -8,15 +8,15 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
- * GitHub with Gemma 4 E2B on the phone (no Claude, no other key): Gemma asks for a tool with one line
+ * GitHub with the local GGUF model on the phone (llama.cpp, no cloud AI, no other key): the model asks for a tool with one line
  * "WERKZEUG: {json}", the app runs it (changes only after the user's approval) and sends the result back.
  */
-class GemmaGitHubAgent(private val gemma: GemmaEngine, token: String) {
+class LocalGitHubAgent(private val llm: LlamaEngine, token: String) {
     private val tools = GitHubTools(GitHubApi(token))
 
     companion object {
         private const val MAX_STEPS = 25
-        private const val RESULT_CHARS = 1500 // Gemma's context is small: keep each result short
+        private const val RESULT_CHARS = 2500 // 8192 tokens of context incl. thinking: keep each result short
 
         fun system(base: String): String = buildString {
             append(base.trim().take(600)).append("\n\n")
@@ -65,7 +65,7 @@ Werkzeuge:
         onText: suspend (String) -> Unit,
         approve: suspend (title: String, details: String) -> Boolean,
     ) {
-        val steps = gemma.session(system(baseSystem), question, MAX_STEPS) { answer ->
+        val steps = llm.session(system(baseSystem), question, MAX_STEPS) { answer ->
             val call = parseCall(answer)
             val before = (if (call != null) answer.substringBefore("WERKZEUG:") else answer).trim()
             if (before.isNotBlank()) onText(before + "\n\n")

@@ -10,7 +10,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Small GitHub REST client (api.github.com) with the user's own token. Answers stay raw JSON text;
- * the agent tools shorten them before they go to Claude.
+ * the agent tools shorten them before they go to the model.
  */
 class GitHubApi(private val token: String) {
     class HttpError(val code: Int, body: String) : IOException("GitHub antwortet $code: ${body.take(400)}")

@@ -12,9 +12,9 @@ import java.net.URL
 import java.net.URLEncoder
 
 /**
- * Internet lookup for Gemini Nano (which cannot browse by itself):
+ * Internet lookup for the local model (which cannot browse by itself):
  * Wikipedia articles for background knowledge + Google News RSS for current headlines.
- * Both are free and need no API key. The results are put into Nano's prompt.
+ * Both are free and need no API key. The results are put into the model prompt.
  */
 object WebLookup {
     private const val UA = "FoldKI (Android chat app)" // no version number that goes stale

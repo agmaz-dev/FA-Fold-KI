@@ -5,7 +5,7 @@ import org.json.JSONArray
 
 /**
  * Long-term memory across chats, the way ChatGPT/Claude do it: facts about the user are stored on the phone
- * and put into the instruction of every new chat. Only used for the on-device models (Nano/Gemma), never sent to Claude.
+ * and put into the instruction of every new chat. Only used by the local model on the phone.
  */
 class MemoryStore(context: Context) {
     private val prefs = context.getSharedPreferences("memory", Context.MODE_PRIVATE)

@@ -7,7 +7,7 @@ import java.io.File
 
 /**
  * Signature images per sender profile: transparent PNG, at most 600×200 px, in noBackupFilesDir/signatures
- * (private, not in any backup, other apps cannot read it). Never sent to Nano or Claude; only drawn into PDFs.
+ * (private, not in any backup, other apps cannot read it). Never sent to any AI; only drawn into PDFs.
  */
 class SignatureStore(context: Context) {
     private val dir = File(context.noBackupFilesDir, "signatures")

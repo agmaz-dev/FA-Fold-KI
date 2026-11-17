@@ -5,13 +5,13 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-/** The daily briefing ("Tagesstart"): facts collected on the device, optionally summarised by Nano. */
+/** The daily briefing ("Tagesstart"): facts collected on the device, optionally summarised by the local model. */
 data class Briefing(
     val date: String,
     val events: List<CalendarSource.Event> = emptyList(),
     val notifications: List<NotificationCollector.Item> = emptyList(),
     val openItems: List<OpenItemsStore.Item> = emptyList(),
-    /** Nano's short summary; null = Nano not available, the plain lists are shown. */
+    /** Short summary of the local model; null = no model, the plain lists are shown. */
     val summary: String? = null,
     val loading: Boolean = false,
     val notificationsAllowed: Boolean = true,
@@ -39,7 +39,7 @@ object DailyBriefing {
         if (e.location.isNotBlank()) append(" (").append(e.location.take(40)).append(")")
     }
 
-    /** Plain facts for Nano, at most 3500 characters. */
+    /** Plain facts for the local model, at most 3500 characters. */
     fun facts(b: Briefing): String = buildString {
         append("Datum: ").append(b.date).append("\n")
         if (b.events.isNotEmpty()) {

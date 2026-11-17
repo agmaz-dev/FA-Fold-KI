@@ -26,7 +26,7 @@ import kotlin.coroutines.resume
 
 /**
  * Imports photos and PDFs into private storage and extracts their text, so that
- * Gemini Nano (text only) can read them too. Claude additionally receives the original file.
+ * the local model reads this text.
  */
 class Attachments(private val context: Context) {
     private val dir = File(context.filesDir, "attachments").apply { mkdirs() }

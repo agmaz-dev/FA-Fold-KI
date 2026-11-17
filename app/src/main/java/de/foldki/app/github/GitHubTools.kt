@@ -5,7 +5,7 @@ import org.json.JSONObject
 import java.util.Base64
 
 /**
- * Everything Claude may do on GitHub with the user's token. Reading runs at once; every change
+ * Everything the local model may do on GitHub with the user's token. Reading runs at once; every change
  * ([Spec.write] = true) is shown to the user first and only runs after "Freigeben".
  */
 class GitHubTools(private val api: GitHubApi) {
@@ -16,7 +16,7 @@ class GitHubTools(private val api: GitHubApi) {
     )
 
     data class Spec(val name: String, val description: String, val params: List<Param>, val write: Boolean = false) {
-        /** JSON schema for the Claude tool definition. */
+        /** JSON schema of the tool definition. */
         fun properties(): Map<String, Any> = params.associate { p ->
             p.name to buildMap<String, Any> {
                 put("type", p.type); put("description", p.description)
