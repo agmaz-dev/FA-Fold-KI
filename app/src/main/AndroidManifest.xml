@@ -16,9 +16,6 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.FoldKI">
-        <!-- GPU backend of Gemma (LiteRT-LM); optional, the CPU is used if the phone does not offer them. -->
-        <uses-native-library android:name="libOpenCL.so" android:required="false" />
-        <uses-native-library android:name="libvndksupport.so" android:required="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -32,7 +29,7 @@
         <!-- Daily briefing: reads only the currently shown notifications when the app opens; nothing is stored. -->
         <service
             android:name=".brief.NotificationCollector"
-            android:label="Fold KI Tagesstart"
+            android:label="FA Fold KI Tagesstart"
             android:exported="true"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>

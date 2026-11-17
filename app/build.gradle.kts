@@ -9,13 +9,28 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "de.foldki.app"
+        // FA Fold KI: own app id, so it installs next to the original Fold KI (de.foldki.app).
+        applicationId = "de.foldki.fa"
         minSdk = 26
         targetSdk = 36
-        versionCode = 38
-        versionName = "3.1"
+        versionCode = 39
+        versionName = "1.0"
         // Galaxy Z Fold7 and all current phones are 64-bit ARM; keeps the APK small.
         ndk { abiFilters += "arm64-v8a" }
+        // llama.cpp (from Jarvis-Android): always optimised, static C++ runtime, 16 KB pages (Android 15+).
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DCMAKE_BUILD_TYPE=Release", "-DANDROID_STL=c++_static", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
+                cppFlags += listOf("-O3")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // Fixed key, committed on purpose: every build must carry the same signature,
@@ -34,6 +49,9 @@ android {
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.getByName("sideload")
+        }
+        debug {
+            isJniDebuggable = false
         }
     }
 
@@ -80,11 +98,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 
-    // Gemini Nano on-device (ML Kit GenAI Prompt API, via Android AICore)
-    implementation("com.google.mlkit:genai-prompt:1.0.0-beta1")
-
-    // Optional Gemma 4 E2B on-device (LiteRT-LM). Pinned; needs Kotlin >= 2.3 (metadata 2.4).
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
+    // The local AI is llama.cpp (C++, built from source via CMake, see src/main/cpp) – no Gemini Nano, no Gemma/LiteRT-LM.
 
     // Reading attachments: PDF text, OCR for photos/scans (offline), photo rotation
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
@@ -94,9 +108,7 @@ dependencies {
     // Supertonic 3 voices (Elena, Tessa, Caleb) on-device
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.32.0")
 
-    // Claude API (official Anthropic Java SDK)
-    implementation("com.anthropic:anthropic-java:3.8.0")
-    // GitHub access for Claude (same OkHttp version the Anthropic SDK already ships)
+    // GitHub access for the local model's tools
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Fold/hinge position for the split view (on-device only)

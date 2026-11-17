@@ -1,0 +1,57 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(foldki_llm C CXX)
+
+# WICHTIG: Die KI immer optimiert bauen, auch in der Test-APK (Debug wäre 10- bis 50-mal langsamer)
+set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS_RELEASE "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_C_FLAGS_DEBUG "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+set(CMAKE_CXX_FLAGS_DEBUG "-O3 -DNDEBUG" CACHE STRING "" FORCE)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# llama.cpp (MIT-Lizenz) wird beim Bauen geladen – feste Version für reproduzierbare APKs
+include(FetchContent)
+set(LLAMA_TAG "b12287" CACHE STRING "llama.cpp Version")
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
+set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
+set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    # Snapdragon 8 Elite (Galaxy Z Fold 7) kann dotprod und i8mm – deutlich schneller bei 4-Bit-Modellen
+    set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+i8mm+fp16" CACHE STRING "" FORCE)
+    # Optimierte Rechenkerne von ARM (schneller auf Snapdragon/Oryon)
+    set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
+endif()
+
+if(DEFINED ENV{LLAMA_SRC_DIR})
+    set(FETCHCONTENT_SOURCE_DIR_LLAMA $ENV{LLAMA_SRC_DIR})
+endif()
+FetchContent_Declare(llama
+    GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
+    GIT_TAG ${LLAMA_TAG}
+    GIT_SHALLOW TRUE)
+FetchContent_MakeAvailable(llama)
+
+add_library(foldki_llm SHARED foldki_llm.cpp)
+target_include_directories(foldki_llm PRIVATE ${llama_SOURCE_DIR}/common ${llama_SOURCE_DIR}/include ${llama_SOURCE_DIR}/vendor)
+if(TARGET llama-common)
+    target_link_libraries(foldki_llm PRIVATE llama llama-common)
+else()
+    target_link_libraries(foldki_llm PRIVATE llama common)
+endif()
+if(ANDROID)
+    target_link_libraries(foldki_llm PRIVATE android log)
+endif()
+# Android 15+ / Google Play: 16-KB-Seiten (Galaxy Z Fold 7) – ELF-Segmente auf 16 KB ausrichten
+target_link_options(foldki_llm PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
