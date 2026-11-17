@@ -4,6 +4,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import android.widget.Toast
+import de.foldki.app.data.MemoryStore
+import de.foldki.app.data.MemoryEntry
+import de.foldki.app.data.MemoryCategory
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -231,7 +237,7 @@ private fun Overview(
         SettingRow("Anweisungen an die KI", systemPreview(system),
             leading = { Tile(Icons.Default.Edit, FK.T6) }, onClick = { open("system") })
         GroupDivider()
-        SettingRow("Gedächtnis", if (mem.isEmpty()) "noch nichts gemerkt" else "${mem.size} Einträge",
+        SettingRow("Gedächtnis", if (mem.isEmpty()) "noch nichts gemerkt" else "${mem.count { it.active }} aktiv von ${mem.size}",
             leading = { Tile(Icons.Default.Psychology, FK.T6) }, onClick = { open("memory") })
         GroupDivider()
         SettingRow("Fehlerbericht", "Version $version",
@@ -395,29 +401,116 @@ fun InstructionsDialog(initial: String, onSave: (String) -> Unit, onDismiss: () 
 @Composable
 private fun MemoryPage(vm: ChatViewModel) {
     val mem by vm.memories.collectAsStateWithLifecycle()
+    var filter by rememberSaveable { mutableStateOf<String?>(null) } // category name; null = all
+    var adding by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<MemoryEntry?>(null) }
+    var deleting by remember { mutableStateOf<MemoryEntry?>(null) }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+
     Note(
-        "Was die KI über dich weiß – gilt in allen Chats (bleibt auf dem Handy). Sag im Chat z. B. „Merk dir: …“ oder „Ich heiße …“.",
+        "Kurze Einträge (Regeln, Beispiele, Fakten), die nur auf dem Handy bleiben. Aktive Einträge gehen mit jeder Frage ans Modell, " +
+            "ausgeschaltete nicht. Du kannst alles ändern oder löschen. Im Chat: „Merk dir: …“ oder „Merken“ unter einer Antwort.",
         Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
     )
+    FkButton("+ Eintrag", Modifier.padding(top = 6.dp, bottom = 10.dp)) { adding = true }
     if (mem.isNotEmpty()) {
-        SectionLabel("Gemerkt")
-        Group {
-            mem.forEachIndexed { i, f ->
-                if (i > 0) GroupDivider()
-                SettingRow(f, null, leading = { Tile(Icons.Default.Psychology, FK.T6) }) {
-                    Text("Löschen", color = FK.Accent, fontSize = 14.sp, modifier = Modifier.clickable { vm.removeMemory(i) }.padding(8.dp))
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FkChip("Alle ${mem.size}", active = filter == null) { filter = null }
+            MemoryCategory.values().forEach { c ->
+                val n = mem.count { it.category == c }
+                if (n > 0) FkChip("${c.label} $n", active = filter == c.name) { filter = if (filter == c.name) null else c.name }
+            }
+        }
+        MemoryCategory.values().forEach { c ->
+            val items = mem.filter { it.category == c && (filter == null || filter == c.name) }.sortedByDescending { it.created }
+            if (items.isNotEmpty()) {
+                SectionLabel(c.label)
+                Group {
+                    items.forEachIndexed { i, e ->
+                        if (i > 0) GroupDivider()
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(e.text, fontSize = 15.sp, color = if (e.active) FK.Text else FK.Muted, maxLines = 6, overflow = TextOverflow.Ellipsis)
+                                    Text(if (e.active) c.label else c.label + " · aus", fontSize = 12.sp, color = FK.Muted)
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                FkToggle(e.active, { on -> vm.setMemoryActive(e.id, on) })
+                            }
+                            Row(Modifier.padding(top = 4.dp)) {
+                                Text("Bearbeiten", color = FK.Accent, fontSize = 14.sp, modifier = Modifier.clickable { editing = e }.padding(end = 16.dp, top = 8.dp, bottom = 8.dp))
+                                Text("Löschen", color = FK.Muted, fontSize = 14.sp, modifier = Modifier.clickable { deleting = e }.padding(end = 16.dp, top = 8.dp, bottom = 8.dp))
+                            }
+                        }
+                    }
                 }
             }
         }
     }
-    SectionLabel("Selbst hinzufügen")
-    var newFact by remember { mutableStateOf("") }
-    Group {
-        FkField("Neuer Eintrag", newFact, { newFact = it })
-        FkButton("Merken", Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), enabled = newFact.isNotBlank()) {
-            vm.addMemory(newFact); newFact = ""
-        }
+    if (adding) MemoryEditDialog(
+        title = "Neuer Eintrag", initialText = "", initialCategory = filter?.let { MemoryCategory.of(it) } ?: MemoryCategory.PERSONAL,
+        onSave = { t, c ->
+            if (!vm.addMemory(t, c)) Toast.makeText(ctx, "Nicht gespeichert: zu kurz oder schon vorhanden.", Toast.LENGTH_SHORT).show()
+            adding = false
+        },
+        onDismiss = { adding = false },
+    )
+    editing?.let { e ->
+        MemoryEditDialog(
+            title = "Eintrag bearbeiten", initialText = e.text, initialCategory = e.category,
+            onSave = { t, c ->
+                if (!vm.updateMemory(e.id, t, c)) Toast.makeText(ctx, "Nicht gespeichert: Text zu kurz.", Toast.LENGTH_SHORT).show()
+                editing = null
+            },
+            onDismiss = { editing = null },
+        )
     }
+    deleting?.let { e ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            containerColor = FK.Surface,
+            title = { Text("Eintrag löschen?", color = FK.Text, fontWeight = FontWeight.SemiBold) },
+            text = { Text(e.text, fontSize = 14.sp, color = FK.Muted) },
+            confirmButton = {
+                Button(
+                    onClick = { vm.removeMemory(e.id); deleting = null }, modifier = Modifier.heightIn(min = 48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = FK.Accent, contentColor = FK.OnAccent),
+                ) { Text("Löschen", fontWeight = FontWeight.SemiBold) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Abbrechen", color = FK.Muted) } },
+        )
+    }
+}
+
+/** Dialog for one memory entry: text (1–2 sentences) and category. Used for "+ Eintrag", editing and "Merken". */
+@Composable
+fun MemoryEditDialog(
+    title: String, initialText: String, initialCategory: MemoryCategory,
+    onSave: (String, MemoryCategory) -> Unit, onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initialText) }
+    var cat by remember { mutableStateOf(initialCategory) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = FK.Surface,
+        title = { Text(title, color = FK.Text, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                FkField("Eintrag (kurz, 1–2 Sätze)", text, { text = it.take(MemoryStore.MAX_TEXT) }, minLines = 3, modifier = Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState()))
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MemoryCategory.values().forEach { c -> FkChip(c.label, active = cat == c) { cat = c } }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(text, cat) }, enabled = text.trim().length >= 3, modifier = Modifier.heightIn(min = 48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = FK.Accent, contentColor = FK.OnAccent),
+            ) { Text("Speichern", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Abbrechen", color = FK.Muted) } },
+    )
 }
 
 @Composable

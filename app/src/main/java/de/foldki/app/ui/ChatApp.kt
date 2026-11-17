@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
@@ -571,8 +572,11 @@ private fun ChatScreen(
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     vm.sigVersion.collectAsStateWithLifecycle().value
     val hasSignature = profiles.second.isNotBlank() && vm.signatures.exists(profiles.second)
+    // "Merken" under an answer: edit dialog with a short excerpt (no AI call).
+    var memoText by remember { mutableStateOf<String?>(null) }
 
     val actions = MessageActions(
+        memorize = { text -> memoText = text },
         copy = { text ->
             (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
                 .setPrimaryClip(android.content.ClipData.newPlainText("Text", text))
@@ -645,11 +649,22 @@ private fun ChatScreen(
             onDictate = { voice.stopSpeaking(); speakingId = null },
         )
     }
+    memoText?.let { t ->
+        MemoryEditDialog(
+            title = "Merken", initialText = t, initialCategory = de.foldki.app.data.MemoryCategory.PERSONAL,
+            onSave = { text, cat ->
+                vm.notify(if (vm.addMemory(text, cat)) "Gemerkt" else "Nicht gespeichert: zu kurz oder schon vorhanden.")
+                memoText = null
+            },
+            onDismiss = { memoText = null },
+        )
+    }
     if (modelOpen) ModelSheet(ui, vm, onDismiss = { modelOpen = false }, onSettings = onSettings)
     if (attachOpen) AttachSheet(vm, onDismiss = { attachOpen = false }, setPrompt = { text = it })
 }
 
 private class MessageActions(
+    val memorize: (String) -> Unit,
     val copy: (String) -> Unit,
     val savePdf: (String) -> Unit,
     val sharePdf: (String) -> Unit,
@@ -796,6 +811,7 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     SmallAction(if (actions.speakingId == m.id) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
                         if (actions.speakingId == m.id) "Vorlesen stoppen" else "Vorlesen") { actions.speak(m.id, DocumentParser.spoken(m.text)) }
                     SmallAction(Icons.Default.Share, "Teilen") { actions.sharePdf(exportText) }
+                    SmallAction(Icons.Default.Psychology, "Merken") { actions.memorize(de.foldki.app.data.MemoryStore.excerpt(clean)) }
                 }
             }
         }

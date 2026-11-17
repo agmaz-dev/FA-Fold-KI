@@ -193,9 +193,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     // ---- Long-term memory (on-device only) ----
     val memory = de.foldki.app.data.MemoryStore(app)
     private val _memories = MutableStateFlow(memory.all())
-    val memories: StateFlow<List<String>> = _memories.asStateFlow()
-    fun addMemory(fact: String) { memory.add(fact); _memories.value = memory.all() }
-    fun removeMemory(index: Int) { memory.remove(index); _memories.value = memory.all() }
+    val memories: StateFlow<List<de.foldki.app.data.MemoryEntry>> = _memories.asStateFlow()
+    /** Adds an entry; false if it was empty, too short or already there. */
+    fun addMemory(text: String, category: de.foldki.app.data.MemoryCategory = de.foldki.app.data.MemoryCategory.PERSONAL): Boolean {
+        val ok = memory.add(text, category) != null
+        _memories.value = memory.all()
+        return ok
+    }
+    fun updateMemory(id: String, text: String, category: de.foldki.app.data.MemoryCategory): Boolean {
+        val ok = memory.update(id, text, category)
+        _memories.value = memory.all()
+        return ok
+    }
+    fun setMemoryActive(id: String, on: Boolean) { memory.setActive(id, on); _memories.value = memory.all() }
+    fun removeMemory(id: String) { memory.remove(id); _memories.value = memory.all() }
     /** App in the background or memory is low: free the model's memory (it loads again on the next question). */
     fun onBackground() { if (!llmGenerating) llm.close() }
 
@@ -552,8 +563,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true ||
             (hasLetterInChat && REPLY_INTENT.containsMatchIn(prompt) && !JUST_READ.containsMatchIn(prompt))
-        // Long-term memory: "Merk dir …", "Ich heiße …" etc. are kept on the phone for all later chats.
-        val learned = de.foldki.app.data.MemoryStore.factsIn(prompt).filter { memory.add(it) }
+        // Memory: an explicit "Merk dir …" becomes an active entry (category Persönlich); the user can switch it off or delete it in the settings.
+        val learned = listOfNotNull(de.foldki.app.data.MemoryStore.explicitIn(prompt)).map { de.foldki.app.data.MemoryStore.fromChat(it) }
+            .filter { memory.add(it, de.foldki.app.data.MemoryCategory.PERSONAL) != null }
         if (learned.isNotEmpty()) {
             _memories.value = memory.all()
             _ui.update { it.copy(notice = "Gemerkt: ${learned.joinToString("; ")}") }
@@ -568,8 +580,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // Like FA-PDF: the AI reads a new letter once (date, sender, case number, deadline, suggestions).
                 analyzeDocs(conv.id, history.flatMap { it.attachments }, engine)
                 val history = _ui.value.conversations.firstOrNull { it.id == conv.id }?.messages?.dropLast(1) ?: history
-                // System message = only the user's own instruction (empty = none). Nothing is added by the app.
-                val localSystem = settings.systemPrompt
+                // System message = the user's own instruction + his ACTIVE memory entries (empty = no system message).
+                val localSystem = de.foldki.app.data.MemoryStore.systemMessage(settings.systemPrompt, memory.all())
                 logSystem = localSystem
                 logHistory = history.size
                 if (isGitHubTask(prompt, history)) {
