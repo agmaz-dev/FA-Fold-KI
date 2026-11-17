@@ -472,6 +472,7 @@ private fun StartScreen(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, 
     val first = profiles.first.firstOrNull { it.id == profiles.second }?.name?.trim()?.split(Regex("\\s+"))?.firstOrNull().orEmpty()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val maxCard = maxHeight * 0.45f
+        val topGap = minOf(120.dp, maxHeight * 0.14f)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             brief?.let { b ->
                 BriefCard(
@@ -479,7 +480,7 @@ private fun StartScreen(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, 
                     modifier = Modifier.padding(vertical = 8.dp).widthIn(max = 680.dp).fillMaxWidth().heightIn(max = maxCard),
                 )
             }
-            Spacer(Modifier.height(if (brief == null) minOf(120.dp, maxHeight * 0.14f) else 16.dp))
+            Spacer(Modifier.height(if (brief == null) topGap else 16.dp))
             Spark(34.dp)
             Spacer(Modifier.height(14.dp))
             Text(
