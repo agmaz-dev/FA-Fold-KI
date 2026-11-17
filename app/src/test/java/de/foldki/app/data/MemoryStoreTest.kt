@@ -113,9 +113,7 @@ class MemoryStoreTest {
         assertEquals("Meine Anweisung\n\n" + MemoryStore.HEADING + "\n- Duze mich", MemoryStore.systemMessage("Meine Anweisung\n", e))
     }
 
-    @Test fun explicitMerkDirOnly() {
-        assertEquals("meine Lieblingsfarbe ist Blau", MemoryStore.explicitIn("Merk dir: meine Lieblingsfarbe ist Blau"))
-        assertNull(MemoryStore.explicitIn("Ich heiße Paula und wohne in Berlin"))
+    @Test fun chatWordingOfDetectedFacts() {
         assertEquals("Meine Lieblingsfarbe ist Blau", MemoryStore.fromChat("meine Lieblingsfarbe ist Blau."))
     }
 

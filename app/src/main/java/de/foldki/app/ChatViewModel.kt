@@ -563,8 +563,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true ||
             (hasLetterInChat && REPLY_INTENT.containsMatchIn(prompt) && !JUST_READ.containsMatchIn(prompt))
-        // Memory: an explicit "Merk dir …" becomes an active entry (category Persönlich); the user can switch it off or delete it in the settings.
-        val learned = listOfNotNull(de.foldki.app.data.MemoryStore.explicitIn(prompt)).map { de.foldki.app.data.MemoryStore.fromChat(it) }
+        // Memory, fully automatic (no dialog): "Merk dir …" and statements about the user ("Ich heiße …") are saved right away as an
+        // active entry (category Persönlich). The notice is informational; the user can edit, switch off or delete it in the settings.
+        val learned = de.foldki.app.data.MemoryStore.factsIn(prompt).map { de.foldki.app.data.MemoryStore.fromChat(it) }
             .filter { memory.add(it, de.foldki.app.data.MemoryCategory.PERSONAL) != null }
         if (learned.isNotEmpty()) {
             _memories.value = memory.all()

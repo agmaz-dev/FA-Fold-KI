@@ -179,9 +179,6 @@ class MemoryStore(private val storage: MemoryStorage, private val now: () -> Lon
         /** Wording of an entry saved from "Merk dir …" in the chat: no closing dot, first letter upper case. */
         fun fromChat(fact: String): String = fact.trim().trimEnd('.', '!').replaceFirstChar { it.uppercase() }
 
-        /** Only an explicit "Merk dir …" is saved automatically (statements like "ich wohne in …" are not). */
-        fun explicitIn(message: String): String? = EXPLICIT.find(message)?.groupValues?.get(6)?.trim()?.takeIf { it.isNotEmpty() }
-
         /** What from a message should be remembered (explicit "Merk dir …" or a statement about the user). */
         fun factsIn(message: String): List<String> {
             EXPLICIT.find(message)?.let { return listOf(it.groupValues[6].trim()) }
