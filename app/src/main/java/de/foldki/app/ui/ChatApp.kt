@@ -389,7 +389,7 @@ private fun ModelSheet(ui: UiState, vm: ChatViewModel, onDismiss: () -> Unit, on
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp), dragHandle = { Grab() },
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 24.dp).navigationBarsPadding()) {
-            SheetTitle("Modell wählen", "Offline bleibt alles auf dem Handy. Online braucht einen Claude-Schlüssel.")
+            SheetTitle("Modell wählen", "Beide Modelle laufen offline – alles bleibt auf dem Handy.")
             SectionLabel("Auf dem Gerät", Modifier.offset(y = (-14).dp))
             val nanoSel = ui.engine == Engine.NANO && !ui.gemmaActive
             ModelOption(Icons.Default.PhoneAndroid, FK.T1, "Gemini Nano", "Standard · offline · schnell", nanoSel) {
@@ -397,22 +397,10 @@ private fun ModelSheet(ui: UiState, vm: ChatViewModel, onDismiss: () -> Unit, on
                 vm.setEngine(Engine.NANO); onDismiss()
             }
             val gReady = ui.gemma == LocalModelManager.State.Ready
-            ModelOption(Icons.Default.Diamond, FK.T3, "Gemma 4 E2B", "offline · längere Texte", ui.engine == Engine.NANO && ui.gemmaActive,
+            ModelOption(Icons.Default.Diamond, FK.T3, "Gemma 4 E2B", "offline · längere Texte · GitHub", ui.engine == Engine.NANO && ui.gemmaActive,
                 tag = if (gReady) "bereit" else "nicht geladen", tagOn = gReady) {
                 if (gReady) { vm.setGemmaEnabled(true); vm.setEngine(Engine.NANO); onDismiss() }
                 else { vm.notify("Gemma zuerst unter Einstellungen → Gemma 4 E2B laden"); onDismiss(); onSettings() }
-            }
-            SectionLabel("Online (Claude)")
-            val subs = listOf("stärkstes · Briefe, Code, GitHub", "schnell", "günstig")
-            Settings.MODELS.forEachIndexed { i, (id, label) ->
-                ModelOption(
-                    Icons.Default.Cloud, FK.T2, label.substringBefore(" ("), subs.getOrElse(i) { label.substringAfter("(").removeSuffix(")") },
-                    ui.engine == Engine.CLAUDE && ui.model == id,
-                    tag = if (i == 0 && !ui.apiKeySet) "Schlüssel fehlt" else null,
-                ) {
-                    if (!ui.apiKeySet) { vm.notify("Bitte zuerst den Claude-API-Schlüssel eintragen"); onDismiss(); onSettings() }
-                    else { vm.saveSettings(vm.settings.apiKey, id, vm.settings.systemPrompt); vm.setEngine(Engine.CLAUDE); onDismiss() }
-                }
             }
         }
     }

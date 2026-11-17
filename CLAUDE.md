@@ -17,6 +17,7 @@
 - Zoomen immer dort, wo die Finger sind (Mittelpunkt zwischen den zwei Fingern), nicht nur in die Bildmitte. Gezoomt muss man überall hin schieben können (links, rechts, oben, unten). Doppeltipp zoomt an der getippten Stelle hinein bzw. wieder heraus. Referenz: `ui/PdfPreview.kt`.
 
 ## Design (ab 3.0)
+- Claude wird in der Oberfläche nicht mehr angeboten (Modellwahl: nur Gemini Nano und Gemma 4 E2B).
 - Immer das dunkle Fold-KI-Design: Farben/Bausteine in `ui/Theme.kt` (`FK`) und `ui/Design.kt` (Tile, Group, SettingRow, Tag, FkToggle, FkChip, FkButton), Schrift Inter (`res/font`). Neue Bildschirme nur mit diesen Bausteinen bauen, damit alles gleich aussieht.
 
 ## Allgemein
@@ -28,5 +29,5 @@
 - Briefe lesen wie FA-PDF: `export/LetterAnalysis.kt` (KI liest das Schreiben einmal: KURZ/BRIEFDATUM/FRIST/BETRAG/ABSENDER/BEZUG/ANSPRECHPARTNER/VORSCHLAG, ergänzt LetterMeta; Platzhalter füllen, Ende ergänzen, Antwort-Vorschläge, Absenderprofil pro Empfänger). Gemma bekommt ganze Dokumente (`NanoEngine.buildPrompt(large = true)`).
 - Briefe: `export/LetterMeta.kt` (Datum/Empfänger/Zeichen/Betreff aus Seite 1), Absenderprofile `data/SenderProfile.kt` + Unterschrift `data/SignatureStore.kt`, PDF-Vorschau `ui/PdfPreview.kt` (öffnet sich nach jedem Brief).
 - Einstellungen = aufklappbare Karten (`ui/SettingsScreen.kt`). Aufgeklappt: Trennwand-Knopf oben links in der Chat-Leiste (`SplitPaneState.toggleFirst`).
-- GitHub (ab 2.9): Claude mit Werkzeugen (`ai/GitHubAgent.kt`, `github/GitHubTools.kt`, `github/GitHubApi.kt`), Token in den Einstellungen. Lesen sofort, **jede Änderung nur nach Freigabe** (Dialog `UiState.approval`). Nano/Gemma bekommen keinen GitHub-Zugang. `ai/ClaudeEngine.kt` bleibt unverändert.
+- GitHub (ab 3.1): **nur Gemma 4 E2B auf dem Handy** mit Werkzeugen (`ai/GemmaGitHubAgent.kt`: Zeile `WERKZEUG: {json}`, `github/GitHubTools.kt`, `github/GitHubApi.kt`), nur GitHub-Token nötig. **Kein Claude, kein API-Schlüssel** – der Nutzer will Claude nicht in seiner App. Lesen sofort, **jede Änderung nur nach Freigabe** (Dialog `UiState.approval`). Nano kann keine Werkzeuge.
 - Tests: `./gradlew testReleaseUnitTest` (LetterMeta, DocumentParser, SenderProfile, TaskExtractor).

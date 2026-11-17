@@ -57,7 +57,10 @@ data class UiState(
 
 data class Approval(val title: String, val details: String)
 
-/** GitHub tasks (go to Claude with GitHub tools when a token is set). */
+/** Clearly a GitHub task (without a token the app explains how to connect). */
+private val GITHUB_STRONG = Regex("github|\\brepo(s|sitor(y|ys|ies|ium|ien))?\\b|pull ?request|\\bcommit|\\bapk\\b", RegexOption.IGNORE_CASE)
+
+/** GitHub tasks (go to Gemma with GitHub tools when a token is set). */
 private val GITHUB_WORDS = Regex(
     "github|\\brepo(s|sitor(y|ys|ies|ium|ien))?\\b|pull ?request|\\bcommit|\\bbranch|workflow|\\bapk\\b|programmier|quellcode|\\bcode\\b|" +
         "\\bbuild\\b|bauen? (die|eine|mir eine) app|app bauen|kotlin|gradle",
@@ -143,7 +146,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(
         UiState(
             conversations = store.load(),
-            engine = settings.engine,
+            engine = Engine.NANO, // Claude is no longer offered: always on the phone
             model = settings.claudeModel,
             apiKeySet = settings.apiKey.isNotBlank(),
             githubSet = settings.githubToken.isNotBlank(),
@@ -249,6 +252,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         ) { t -> editMessage(convId, msgId) { it.copy(text = it.text + t) } }
 
     /** Runs Gemma (loading it if needed); false = not available / no first token in time -> caller uses Nano. */
+    /** Loads Gemma if needed (max. 60 s). false = not available (then Nano answers). */
+    private suspend fun ensureGemmaLoaded(): Boolean {
+        if (gemma.isLoaded) return true
+        val d = gemma.loadAsync(models.modelFile.absolutePath, settings.gemmaBackend == "GPU") { b -> settings.gemmaAttempt = b }
+        gemmaBegin(); d.invokeOnCompletion { gemmaEnd() } // stays guarded until the native load really ends
+        val backend = try { withTimeoutOrNull(60_000) { d.await() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) {
+            de.foldki.app.data.DebugLog.write("Gemma Ladefehler: ${e.stackTraceToString().take(1500)}"); null
+        } ?: run { de.foldki.app.data.DebugLog.write("Gemma nicht geladen (Fehler oder > 60 s)"); return false }
+        de.foldki.app.data.DebugLog.write("Gemma geladen · Backend: $backend")
+        if (backend == "CPU" && settings.gemmaBackend == "GPU") settings.gemmaBackend = "CPU"
+        return true
+    }
+
     private suspend fun runGemma(
         system: String, history: List<ChatMessage>, web: Boolean,
         onStart: () -> Unit = {}, onFail: () -> Unit = {}, onText: (String) -> Unit,
@@ -258,15 +274,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         gemmaBegin()
         gemmaGenerating = true
         try {
-            if (!gemma.isLoaded) {
-                val d = gemma.loadAsync(models.modelFile.absolutePath, settings.gemmaBackend == "GPU") { b -> settings.gemmaAttempt = b }
-                gemmaBegin(); d.invokeOnCompletion { gemmaEnd() } // stays guarded until the native load really ends
-                val backend = try { withTimeoutOrNull(60_000) { d.await() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) {
-                    de.foldki.app.data.DebugLog.write("Gemma Ladefehler: ${e.stackTraceToString().take(1500)}"); null
-                } ?: run { de.foldki.app.data.DebugLog.write("Gemma nicht geladen (Fehler oder > 60 s)"); return false }
-                de.foldki.app.data.DebugLog.write("Gemma geladen · Backend: $backend")
-                if (backend == "CPU" && settings.gemmaBackend == "GPU") settings.gemmaBackend = "CPU"
-            }
+            if (!ensureGemmaLoaded()) return false
             settings.gemmaAttempt = gemma.backendUsed ?: settings.gemmaBackend
             onStart()
             return coroutineScope {
@@ -564,7 +572,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** GitHub task: Claude with the token's tools, if both keys are there. */
     private fun isGitHubTask(prompt: String, history: List<ChatMessage>): Boolean {
-        if (settings.githubToken.isBlank() || settings.apiKey.isBlank()) return false
+        if (settings.githubToken.isBlank()) return false
         if (GITHUB_WORDS.containsMatchIn(prompt)) return true
         // follow-ups ("ja, mach weiter") in a chat that already worked on GitHub
         return history.takeLast(4).any { m ->
@@ -647,16 +655,34 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 logSystem = if (engine == Engine.CLAUDE) system else localSystem
                 logHistory = history.size
                 if (isGitHubTask(prompt, history)) {
-                    // GitHub needs Claude (online) – Nano/Gemma cannot do this reliably.
-                    if (engine != Engine.CLAUDE) _ui.update { it.copy(notice = "GitHub-Aufgabe: Fold KI arbeitet online") }
-                    editMessage(conv.id, botMsg.id) { it.copy(engine = Engine.CLAUDE) }
-                    logSystem = system
-                    logHistory = history.size
-                    de.foldki.app.ai.GitHubAgent(settings.apiKey, settings.claudeModel, settings.githubToken).run(
-                        system = system, history = history.filterNot { it.localOnly },
-                        onText = { t -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + t) } },
-                        approve = { title, details -> askApproval(title, details) },
-                    )
+                    // GitHub only with Gemma 4 E2B on the phone (no Claude, no other key). Nano cannot use tools.
+                    editMessage(conv.id, botMsg.id) { it.copy(engine = Engine.GEMMA) }
+                    val ok = models.isReady && !tooHot() && run {
+                        idleJob?.cancel(); gemmaBegin(); gemmaGenerating = true
+                        try {
+                            if (!ensureGemmaLoaded()) false
+                            else {
+                                de.foldki.app.ai.GemmaGitHubAgent(gemma, settings.githubToken).run(
+                                    baseSystem = settings.systemPrompt, question = prompt,
+                                    onText = { t -> editMessage(conv.id, botMsg.id) { it.copy(text = it.text + t) } },
+                                    approve = { title, details -> askApproval(title, details) },
+                                )
+                                true
+                            }
+                        } finally { gemmaGenerating = false; gemmaEnd(); scheduleIdleUnload() }
+                    }
+                    if (!ok) editMessage(conv.id, botMsg.id) {
+                        it.copy(text = it.text + "Für GitHub-Aufgaben braucht Fold KI Gemma 4 E2B auf dem Handy. " +
+                            "Bitte unter Einstellungen → Gemma 4 E2B laden (einmalig 2,6 GB) und dann nochmal fragen.", engine = Engine.NANO)
+                    }
+                    finished = true
+                    return@launch
+                }
+                if (settings.githubToken.isBlank() && GITHUB_STRONG.containsMatchIn(prompt)) {
+                    editMessage(conv.id, botMsg.id) {
+                        it.copy(text = "Für GitHub-Aufgaben trag bitte unter Einstellungen → GitHub deinen Token ein und tippe auf „Verbinden & prüfen“. " +
+                            "Danach arbeitet Gemma auf dem Handy mit deinem GitHub – jede Änderung nur mit deiner Freigabe.")
+                    }
                     finished = true
                     return@launch
                 }

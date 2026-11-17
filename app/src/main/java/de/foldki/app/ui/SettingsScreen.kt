@@ -125,8 +125,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                         null -> Overview(vm, ui, key, model, ghToken, stReady, stVoice, rate, system) { page = it }
                         "nano" -> NanoPage(vm, ui)
                         "gemma" -> Group { Column(Modifier.padding(16.dp)) { GemmaSettings(vm, ui) } }
-                        "claude" -> ClaudePage(key, { key = it }, model, { model = it })
-                        "github" -> GitHubPage(vm, ghToken, { ghToken = it })
+                                                "github" -> GitHubPage(vm, ghToken, { ghToken = it })
                         "sender" -> Group { Column(Modifier.padding(12.dp)) { SenderProfilesList(vm, onEdit = { editProfile = it }) } }
                         "voice" -> VoicePage(vm, stStatus, stBusy, stReady, stVoice, { stVoice = it }, rate, { rate = it })
                         "brief" -> Group { Column(Modifier.padding(16.dp)) { BriefSettings(vm) } }
@@ -185,12 +184,6 @@ private fun Overview(
         ) {
             if (g == LocalModelManager.State.Ready) FkToggle(ui.gemmaEnabled, { vm.setGemmaEnabled(it) }) else Chevron()
         }
-        GroupDivider()
-        SettingRow(
-            "Claude (online)",
-            if (key.isBlank()) "Kein API-Schlüssel" else Settings.MODELS.firstOrNull { it.first == model }?.second?.substringBefore(" (") ?: model,
-            leading = { Tile(Icons.Default.Cloud, FK.T2) }, onClick = { open("claude") },
-        )
     }
 
     SectionLabel("Zugänge")
@@ -314,7 +307,7 @@ private fun GitHubPage(vm: ChatViewModel, token: String, setToken: (String) -> U
     PageHeader(
         Icons.Default.Code, FK.T6,
         when { token.isBlank() -> "Nicht verbunden"; login.isNotBlank() -> "Verbunden als $login"; else -> "Token eingetragen – noch nicht geprüft" },
-        "Fold KI kann suchen, Code lesen, Repos anlegen, committen und APKs bauen. Jede Änderung zeigt die App dir vorher.",
+        "Gemma 4 E2B kann auf deinem Handy suchen, Code lesen, Repos anlegen, committen und Builds starten. Jede Änderung zeigt die App dir vorher.",
     )
     SectionLabel("Zugang")
     Group {
@@ -338,7 +331,7 @@ private fun GitHubPage(vm: ChatViewModel, token: String, setToken: (String) -> U
     Note(
         "Token anlegen: github.com → Settings → Developer settings → Personal access tokens. Rechte: Contents, Pull requests, " +
             "Issues, Actions, Workflows (Lesen und Schreiben), Administration (zum Anlegen von Repos). " +
-            "Fold KI nutzt dafür das Online-Modell – den API-Schlüssel unter „Claude (online)“ eintragen.",
+            "Fold KI arbeitet dafür mit Gemma 4 E2B auf dem Handy – Gemma muss geladen sein. Kein weiterer Schlüssel nötig.",
         Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp),
     )
 }

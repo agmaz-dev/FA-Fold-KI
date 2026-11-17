@@ -148,6 +148,37 @@ class GemmaEngine(context: Context) {
         }
     }.flowOn(Dispatchers.Default)
 
+    /**
+     * Multi-step conversation (GitHub tasks): Gemma answers, [onTurn] gets the whole answer and returns the next
+     * message (e.g. a tool result) or null to stop. One conversation, so Gemma keeps the context of earlier steps.
+     */
+    suspend fun session(system: String, first: String, maxSteps: Int, onTurn: suspend (String) -> String?) =
+        kotlinx.coroutines.withContext(Dispatchers.Default) {
+            val e = engine ?: throw IllegalStateException("Gemma ist nicht geladen.")
+            val conv = e.createConversation(
+                ConversationConfig(
+                    systemInstruction = Contents.of(system),
+                    samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.2),
+                ),
+            )
+            try {
+                var msg: String? = first
+                var step = 0
+                while (msg != null && step < maxSteps) {
+                    step++
+                    val sb = StringBuilder()
+                    conv.sendMessageAsync(msg).collect { m ->
+                        sb.append(m.contents.contents.filterIsInstance<Content.Text>().joinToString("") { it.text })
+                    }
+                    de.foldki.app.data.DebugLog.write("Gemma GitHub Schritt $step: " + sb.toString().replace("\n", "⏎").take(800))
+                    msg = onTurn(sb.toString())
+                }
+                step
+            } finally {
+                runCatching { conv.close() }
+            }
+        }
+
     private fun stream(e: Engine, prompt: String): Flow<String> = flow {
         val conv = e.createConversation(ConversationConfig(samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.7)))
         var done = false
