@@ -20,6 +20,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # llama.cpp (C++) is built with CMake from the Android SDK; NDK is installed by Gradle if missing.
       - name: Build release APK
         id: build
         run: |
@@ -28,21 +29,31 @@ jobs:
           ./gradlew --no-daemon assembleRelease
           VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          cp app/build/outputs/apk/release/app-release.apk "FoldKI-$VERSION.apk"
+          cp app/build/outputs/apk/release/app-release.apk "FA-Fold-KI-$VERSION.apk"
+
+      # 16 KB page size check of the native libraries (Android 15+, Galaxy Z Fold 7). Information only.
+      - name: Check 16 KB alignment of native libraries
+        continue-on-error: true
+        run: |
+          mkdir -p so && unzip -o -q FA-Fold-KI-*.apk 'lib/arm64-v8a/*.so' -d so
+          OBJDUMP=$(ls -d $ANDROID_HOME/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump | tail -1)
+          for f in so/lib/arm64-v8a/*.so; do
+            echo "$(basename $f): LOAD align $($OBJDUMP -p "$f" | awk '/LOAD/ {print $NF}' | sort -u | tr '\n' ' ')"
+          done
 
       # Extra copy only; the GitHub release below is the download. Never let a full artifact storage stop the release.
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
           retention-days: 1
-          name: FoldKI-${{ steps.build.outputs.version }}
-          path: FoldKI-*.apk
+          name: FA-Fold-KI-${{ steps.build.outputs.version }}
+          path: FA-Fold-KI-*.apk
 
       - name: Publish as GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-${{ github.run_number }}
-          name: Fold KI ${{ steps.build.outputs.version }} (Build ${{ github.run_number }})
-          body: "Fold KI ${{ steps.build.outputs.version }} – APK zum direkten Installieren auf Android. Branch: ${{ github.ref_name }}"
-          files: FoldKI-*.apk
+          name: FA Fold KI ${{ steps.build.outputs.version }} (Build ${{ github.run_number }})
+          body: "FA Fold KI ${{ steps.build.outputs.version }} – APK zum direkten Installieren auf Android. Branch: ${{ github.ref_name }}"
+          files: FA-Fold-KI-*.apk
           make_latest: true
