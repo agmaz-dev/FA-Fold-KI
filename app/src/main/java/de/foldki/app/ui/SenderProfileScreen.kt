@@ -172,7 +172,7 @@ fun SenderProfilesList(vm: ChatViewModel, onEdit: (String) -> Unit) {
     var confirmDelete by remember { mutableStateOf<SenderProfile?>(null) }
     val (list, active) = all
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (list.isEmpty()) Text("Noch kein Absender. Lege ein Profil an, dann übernimmt Nano Name und Adresse in jeden Brief.",
+        if (list.isEmpty()) Text("Noch kein Absender. Lege ein Profil an, dann übernimmt die App Name und Adresse in jeden Brief.",
             fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         list.forEach { p ->
             Row(
@@ -198,7 +198,7 @@ fun SenderProfilesList(vm: ChatViewModel, onEdit: (String) -> Unit) {
             Text("Profil hinzufügen")
         }
         Text(
-            "Der aktive Absender wird bei Briefen an Nano gegeben – und an Claude, wenn Claude den Brief schreibt. Die Unterschrift bekommt keine KI.",
+            "Der aktive Absender wird bei Briefen an das lokale Modell gegeben (bleibt auf dem Handy). Die Unterschrift bekommt keine KI.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

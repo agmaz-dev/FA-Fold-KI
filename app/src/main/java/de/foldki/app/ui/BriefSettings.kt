@@ -62,7 +62,7 @@ fun BriefSettings(vm: ChatViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             "Morgens zwischen 5 und 11 Uhr zeigt die App beim ersten Öffnen einmal am Tag eine kurze Übersicht. " +
-                "Alles bleibt auf dem Handy, Gemini Nano fasst zusammen. Claude bekommt diese Daten nie.",
+                "Alles bleibt auf dem Handy, das lokale Modell fasst zusammen. Keine Daten gehen ins Internet.",
             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         SwitchRow("Tagesstart", if (enabled) "An" else "Aus", enabled) { enabled = it; vm.setDailyBrief(it) }
@@ -86,7 +86,7 @@ fun BriefSettings(vm: ChatViewModel) {
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) { Text("Zugriff auf Mitteilungen erlauben") }
                 Text(
-                    "Ist der Schalter dort grau („Eingeschränkte Einstellung“): App-Info von Fold KI öffnen, oben rechts ⋮ antippen, " +
+                    "Ist der Schalter dort grau („Eingeschränkte Einstellung“): App-Info von FA Fold KI öffnen, oben rechts ⋮ antippen, " +
                         "„Eingeschränkte Einstellungen zulassen“ wählen und dann den Zugriff erneut einschalten.",
                     fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

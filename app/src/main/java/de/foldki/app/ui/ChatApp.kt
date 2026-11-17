@@ -245,7 +245,7 @@ private fun Sidebar(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, onPi
     }
     Column(Modifier.fillMaxHeight().background(FK.Side).statusBarsPadding().navigationBarsPadding().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp, bottom = 10.dp).heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Fold KI", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = FK.Text, modifier = Modifier.weight(1f))
+            Text("FA Fold KI", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = FK.Text, modifier = Modifier.weight(1f))
             if (onCollapse != null) IconButton(onClick = onCollapse) {
                 Icon(Icons.AutoMirrored.Filled.MenuOpen, "Seitenleiste schließen", tint = FK.Text)
             }
@@ -342,15 +342,9 @@ private fun Sidebar(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, onPi
 /** Unfolded only: button that closes/opens the chat list pane. */
 private class SidebarToggle(val open: Boolean, val toggle: () -> Unit)
 
-private fun modelName(ui: UiState): String = when (ui.engine) {
-    Engine.CLAUDE -> Settings.MODELS.firstOrNull { it.first == ui.model }?.second?.substringBefore(" (") ?: ui.model
-    else -> if (ui.gemmaActive) "Gemma 4 E2B" else "Gemini Nano"
-}
+private fun modelName(ui: UiState): String = ui.modelName
 
-private fun modelReady(ui: UiState): Boolean = when (ui.engine) {
-    Engine.CLAUDE -> ui.apiKeySet
-    else -> if (ui.gemmaActive) true else ui.nanoReady
-}
+private fun modelReady(ui: UiState): Boolean = ui.modelReady
 
 @Composable
 private fun TopBar(ui: UiState, showMenu: Boolean, onMenu: () -> Unit, sidebar: SidebarToggle?, onModel: () -> Unit, onNew: () -> Unit) {
@@ -368,7 +362,8 @@ private fun TopBar(ui: UiState, showMenu: Boolean, onMenu: () -> Unit, sidebar: 
             ) {
                 StatusDot(modelReady(ui))
                 Spacer(Modifier.width(8.dp))
-                Text(modelName(ui), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = FK.Text, maxLines = 1)
+                Text(modelName(ui), fontSize = 15.sp, fontWeight = FontWeight.Medium, color = FK.Text, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Spacer(Modifier.width(8.dp))
                 Text("▼", fontSize = 11.sp, color = FK.Muted)
             }
@@ -389,18 +384,17 @@ private fun ModelSheet(ui: UiState, vm: ChatViewModel, onDismiss: () -> Unit, on
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp), dragHandle = { Grab() },
     ) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 24.dp).navigationBarsPadding()) {
-            SheetTitle("Modell wählen", "Beide Modelle laufen offline – alles bleibt auf dem Handy.")
+            SheetTitle("Modell wählen", "Alle Modelle laufen offline (GGUF, llama.cpp) – alles bleibt auf dem Handy.")
             SectionLabel("Auf dem Gerät", Modifier.offset(y = (-14).dp))
-            val nanoSel = ui.engine == Engine.NANO && !ui.gemmaActive
-            ModelOption(Icons.Default.PhoneAndroid, FK.T1, "Gemini Nano", "Standard · offline · schnell", nanoSel) {
-                if (ui.gemmaEnabled) vm.setGemmaEnabled(false)
-                vm.setEngine(Engine.NANO); onDismiss()
+            ui.localModels.forEach { m ->
+                ModelOption(Icons.Default.Diamond, FK.T3, m.name, "offline · " + LocalModelManager.gb(m.size), m.file == ui.activeModel,
+                    tag = "bereit", tagOn = true) {
+                    vm.selectModel(m.file); onDismiss()
+                }
             }
-            val gReady = ui.gemma == LocalModelManager.State.Ready
-            ModelOption(Icons.Default.Diamond, FK.T3, "Gemma 4 E2B", "offline · längere Texte · GitHub", ui.engine == Engine.NANO && ui.gemmaActive,
-                tag = if (gReady) "bereit" else "nicht geladen", tagOn = gReady) {
-                if (gReady) { vm.setGemmaEnabled(true); vm.setEngine(Engine.NANO); onDismiss() }
-                else { vm.notify("Gemma zuerst unter Einstellungen → Gemma 4 E2B laden"); onDismiss(); onSettings() }
+            ModelOption(Icons.Default.Diamond, FK.T3, if (ui.localModels.isEmpty()) "Kein Modell geladen" else "Weitere Modelle",
+                "Herunterladen oder .gguf importieren", false, tag = if (ui.localModels.isEmpty()) "nicht geladen" else null) {
+                onDismiss(); onSettings()
             }
         }
     }
@@ -477,16 +471,16 @@ private fun StartScreen(ui: UiState, vm: ChatViewModel, onSettings: () -> Unit, 
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                modelName(ui) + if (ui.engine == Engine.CLAUDE) " · online" else " · offline auf deinem Fold",
+                modelName(ui) + " · offline auf deinem Fold",
                 fontSize = 14.sp, color = FK.Muted, textAlign = TextAlign.Center,
             )
-            if (ui.engine == Engine.NANO && !ui.gemmaActive && !ui.nanoReady) {
+            if (!ui.modelReady) {
                 Spacer(Modifier.height(8.dp))
-                Note(ui.nanoStatus)
-                if (ui.nanoDownloadable) TextButton(onClick = { vm.downloadNano() }) { Text("Gemini Nano herunterladen", color = FK.Accent) }
-                else TextButton(onClick = { vm.checkNano() }) { Text("Erneut prüfen", color = FK.Accent) }
-            } else if (ui.engine == Engine.CLAUDE && !ui.apiKeySet) {
-                TextButton(onClick = onSettings) { Text("API-Schlüssel eintragen", color = FK.Accent) }
+                Note(
+                    if (ui.localModels.isEmpty()) "Noch kein KI-Modell auf dem Handy. Lade ein GGUF-Modell herunter (Vorschlag: Qwen3 4B Thinking, 2,5 GB) oder importiere eine eigene .gguf-Datei."
+                    else "Bitte ein Modell auswählen.",
+                )
+                TextButton(onClick = onSettings) { Text("Modell herunterladen oder importieren", color = FK.Accent) }
             }
             Spacer(Modifier.height(36.dp))
             Column(Modifier.widthIn(max = 560.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -542,7 +536,7 @@ private fun ChatScreen(
             title = { Text("Freigabe: ${a.title}", color = FK.Text, fontWeight = FontWeight.SemiBold) },
             text = {
                 Column {
-                    Text("Fold KI möchte auf GitHub Folgendes tun:", fontSize = 13.sp, color = FK.Muted)
+                    Text("FA Fold KI möchte auf GitHub Folgendes tun:", fontSize = 13.sp, color = FK.Muted)
                     Spacer(Modifier.height(8.dp))
                     Text(
                         a.details, fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = FK.Text,
@@ -767,17 +761,15 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     StatusDot(!m.isError)
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        when (m.engine) {
-                            Engine.NANO -> "Gemini Nano · " + if (m.web) "Web" else "offline"
-                            Engine.GEMMA -> "Gemma 4 E2B · " + if (m.web) "Web" else "offline"
-                            else -> "Claude · online" + if (m.web) " · Websuche" else ""
-                        },
-                        fontSize = 12.sp, color = FK.Muted,
+                        (m.model ?: "Lokales Modell") + " · " + if (m.web) "Web" else "offline",
+                        fontSize = 12.sp, color = FK.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
+            val stillThinking = typing && m.text.isEmpty() && m.thoughts.isNotEmpty()
+            if (m.thoughts.isNotEmpty()) Thoughts(m.thoughts, stillThinking)
             if (doc == null) {
-                AnswerText(textColor, if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean)
+                if (!stillThinking) AnswerText(textColor, if (m.text.isEmpty() && typing) (if (m.web) "Suche im Internet…" else "…") else clean)
             } else {
                 if (parts.before.isNotBlank()) AnswerText(textColor, DocumentParser.clean(parts.before))
                 val shape = RoundedCornerShape(14.dp)
@@ -806,6 +798,30 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                     SmallAction(Icons.Default.Share, "Teilen") { actions.sharePdf(exportText) }
                 }
             }
+        }
+    }
+}
+
+/** "Gedanken" of a thinking model: collapsed by default, tap to expand (only shown, never exported or spoken). */
+@Composable
+private fun Thoughts(text: String, thinking: Boolean) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    Row(
+        Modifier.padding(bottom = 6.dp).clip(RoundedCornerShape(20.dp)).background(FK.Surface).clickable { open = !open }
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(if (thinking) "Denkt nach…" else "Gedanken", fontSize = 12.sp, color = FK.Muted)
+        Spacer(Modifier.width(8.dp))
+        Text(if (open) "▲" else "▼", fontSize = 11.sp, color = FK.Muted)
+    }
+    if (open) {
+        val shape = RoundedCornerShape(14.dp)
+        Column(
+            Modifier.padding(bottom = 10.dp).widthIn(max = 720.dp).fillMaxWidth().clip(shape).background(FK.Surface)
+                .border(1.dp, FK.Line, shape).padding(14.dp),
+        ) {
+            SelectionContainer { Text(text, fontSize = 13.sp, lineHeight = 19.sp, color = FK.Muted) }
         }
     }
 }

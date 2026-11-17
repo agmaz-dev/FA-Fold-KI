@@ -53,7 +53,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import de.foldki.app.ChatViewModel
 import de.foldki.app.UiState
-import de.foldki.app.data.Engine
 import de.foldki.app.data.Role
 import de.foldki.app.export.PdfExporter
 import de.foldki.app.export.DocumentParser
@@ -132,8 +131,9 @@ fun VoiceOverlay(ui: UiState, vm: ChatViewModel, voice: VoiceController, onClose
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                if (ui.engine == Engine.NANO) "Sprachmodus · Gemini Nano" else "Sprachmodus · Claude",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp,
+                "Sprachmodus · " + ui.modelName,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
             Spacer(Modifier.weight(1f))
             Box(

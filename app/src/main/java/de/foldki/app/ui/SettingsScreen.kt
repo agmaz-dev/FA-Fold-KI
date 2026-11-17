@@ -79,8 +79,6 @@ import de.foldki.app.voice.Supertonic
  */
 @Composable
 fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
-    var key by remember { mutableStateOf(vm.settings.apiKey) }
-    var model by remember { mutableStateOf(vm.settings.claudeModel) }
     var system by remember { mutableStateOf(vm.settings.systemPrompt) }
     var ghToken by remember { mutableStateOf(vm.githubToken) }
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
@@ -91,7 +89,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     val stBusy by vm.stBusy.collectAsStateWithLifecycle()
     val stReady = stStatus == READY || vm.voice.isReady
 
-    fun saveAll() { vm.saveSettings(key, model, system); vm.saveVoice(stVoice, rate); vm.saveGitHubToken(ghToken) }
+    fun saveAll() { vm.saveSettings(system); vm.saveVoice(stVoice, rate); vm.saveGitHubToken(ghToken) }
 
     editProfile?.let { id ->
         SenderProfileScreen(vm, id, onBack = { editProfile = null })
@@ -99,11 +97,11 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     }
     DisposableEffect(Unit) { onDispose { vm.voice.stopSpeaking() } }
 
-    val back: () -> Unit = { saveAll(); if (page != null) page = null else onBack() }
+    val back: () -> Unit = { saveAll(); if (page == "hf") page = "models" else if (page != null) page = null else onBack() }
     BackHandler { back() }
 
     val title = when (page) {
-        "nano" -> "Gemini Nano"; "gemma" -> "Gemma 4 E2B"; "claude" -> "Claude (online)"; "github" -> "GitHub"
+        "models" -> "KI-Modelle"; "hf" -> "Hugging Face"; "github" -> "GitHub"
         "sender" -> "Absender & Unterschrift"; "voice" -> "Stimme"; "brief" -> "Tagesstart"
         "system" -> "Systemanweisung"; "memory" -> "Gedächtnis"; "report" -> "Fehlerbericht"
         else -> "Einstellungen"
@@ -116,15 +114,17 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                 Spacer(Modifier.width(4.dp))
                 Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = FK.Text, maxLines = 1)
             }
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            if (page == "hf") {
+                // Mini browser for GGUF models: full height, scrolls itself (no outer scroll around the WebView).
+                Box(Modifier.weight(1f).fillMaxWidth()) { HfBrowser(vm, ui, onDone = { page = "models" }) }
+            } else Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
                 Column(
                     Modifier.widthIn(max = 720.dp).fillMaxWidth().verticalScroll(rememberScrollState())
                         .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp),
                 ) {
                     when (page) {
-                        null -> Overview(vm, ui, key, model, ghToken, stReady, stVoice, rate, system) { page = it }
-                        "nano" -> NanoPage(vm, ui)
-                        "gemma" -> Group { Column(Modifier.padding(16.dp)) { GemmaSettings(vm, ui) } }
+                        null -> Overview(vm, ui, ghToken, stReady, stVoice, rate, system) { page = it }
+                        "models" -> Group { Column(Modifier.padding(16.dp)) { ModelSettings(vm, ui, openBrowser = { page = "hf" }) } }
                                                 "github" -> GitHubPage(vm, ghToken, { ghToken = it })
                         "sender" -> Group { Column(Modifier.padding(12.dp)) { SenderProfilesList(vm, onEdit = { editProfile = it }) } }
                         "voice" -> VoicePage(vm, stStatus, stBusy, stReady, stVoice, { stVoice = it }, rate, { rate = it })
@@ -141,7 +141,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
 
 @Composable
 private fun Overview(
-    vm: ChatViewModel, ui: UiState, key: String, model: String, ghToken: String, stReady: Boolean,
+    vm: ChatViewModel, ui: UiState, ghToken: String, stReady: Boolean,
     stVoice: String, rate: Float, system: String, open: (String) -> Unit,
 ) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
@@ -166,23 +166,23 @@ private fun Overview(
 
     SectionLabel("KI-Modelle")
     Group {
-        SettingRow("Gemini Nano", "Standard · offline", leading = { Tile(Icons.Default.PhoneAndroid, FK.T1) }, onClick = { open("nano") }) {
-            if (ui.nanoReady) Tag("bereit", on = true) else Tag(if (ui.nanoDownloadable) "laden" else "prüfen")
-        }
-        GroupDivider()
-        val g = ui.gemma
+        val op = ui.modelOp
         SettingRow(
-            "Gemma 4 E2B",
-            when (g) {
-                LocalModelManager.State.Ready -> "heruntergeladen · " + if (ui.gemmaEnabled) "an" else "aus"
-                is LocalModelManager.State.Downloading -> "lädt … ${g.pct} %"
-                is LocalModelManager.State.Verifying -> "prüft … ${g.pct} %"
-                is LocalModelManager.State.Failed -> "Fehler – Nano antwortet"
-                LocalModelManager.State.NotDownloaded -> "nicht geladen · ${LocalModelManager.gb(LocalModelManager.SIZE)}"
+            if (ui.modelReady) ui.modelName else "Lokales Modell (GGUF)",
+            when (op) {
+                is LocalModelManager.State.Downloading -> "lädt … ${op.pct} %"
+                is LocalModelManager.State.Verifying -> "prüft … ${op.pct} %"
+                is LocalModelManager.State.Importing -> "importiert … ${op.pct} %"
+                is LocalModelManager.State.Failed -> "Fehler – bitte öffnen"
+                LocalModelManager.State.Idle -> when {
+                    ui.modelReady -> "aktiv · " + (ui.localModels.size.let { if (it == 1) "1 Modell" else "$it Modelle" }) + " auf dem Handy"
+                    ui.localModels.isNotEmpty() -> "kein Modell ausgewählt"
+                    else -> "nicht geladen · herunterladen oder importieren"
+                }
             },
-            leading = { Tile(Icons.Default.Diamond, FK.T3) }, onClick = { open("gemma") },
+            leading = { Tile(Icons.Default.Diamond, FK.T3) }, onClick = { open("models") },
         ) {
-            if (g == LocalModelManager.State.Ready) FkToggle(ui.gemmaEnabled, { vm.setGemmaEnabled(it) }) else Chevron()
+            if (ui.modelReady && op == LocalModelManager.State.Idle) Tag("bereit", on = true) else Chevron()
         }
     }
 
@@ -265,49 +265,13 @@ fun FkField(label: String, value: String, onChange: (String) -> Unit, password: 
 }
 
 @Composable
-private fun NanoPage(vm: ChatViewModel, ui: UiState) {
-    PageHeader(
-        Icons.Default.PhoneAndroid, FK.T1, if (ui.nanoReady) "Bereit" else ui.nanoStatus,
-        "Gemini Nano läuft auf dem Handy und ist immer Standard und Ersatz, auch wenn Gemma eingeschaltet ist.",
-    )
-    if (!ui.nanoReady) {
-        Spacer(Modifier.height(14.dp))
-        if (ui.nanoDownloadable) FkButton("Gemini Nano herunterladen") { vm.downloadNano() }
-        else FkButton("Erneut prüfen", ghost = true) { vm.checkNano() }
-    }
-}
-
-@Composable
-private fun ClaudePage(key: String, setKey: (String) -> Unit, model: String, setModel: (String) -> Unit) {
-    PageHeader(
-        Icons.Default.Cloud, FK.T2, if (key.isBlank()) "Kein API-Schlüssel" else "Schlüssel eingetragen",
-        "Für Briefe, Code und GitHub über das Internet. Der Schlüssel bleibt nur auf diesem Gerät.",
-    )
-    SectionLabel("Zugang")
-    Group {
-        FkField("API-Schlüssel", key, setKey, password = true)
-        Note("Erhältlich unter console.anthropic.com.", Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp))
-    }
-    SectionLabel("Modell")
-    Group {
-        Settings.MODELS.forEachIndexed { i, (id, label) ->
-            if (i > 0) GroupDivider()
-            SettingRow(label.substringBefore(" ("), label.substringAfter("(").removeSuffix(")"),
-                leading = { Tile(Icons.Default.Cloud, FK.T2) }, onClick = { setModel(id) }) {
-                if (model == id) Icon(Icons.Default.Check, "Gewählt", tint = FK.Accent, modifier = Modifier.size(22.dp))
-            }
-        }
-    }
-}
-
-@Composable
 private fun GitHubPage(vm: ChatViewModel, token: String, setToken: (String) -> Unit) {
     val login by vm.githubLogin.collectAsStateWithLifecycle()
     val checking by vm.githubChecking.collectAsStateWithLifecycle()
     PageHeader(
         Icons.Default.Code, FK.T6,
         when { token.isBlank() -> "Nicht verbunden"; login.isNotBlank() -> "Verbunden als $login"; else -> "Token eingetragen – noch nicht geprüft" },
-        "Gemma 4 E2B kann auf deinem Handy suchen, Code lesen, Repos anlegen, committen und Builds starten. Jede Änderung zeigt die App dir vorher.",
+        "Das lokale Modell kann auf deinem Handy suchen, Code lesen, Repos anlegen, committen und Builds starten. Jede Änderung zeigt die App dir vorher.",
     )
     SectionLabel("Zugang")
     Group {
@@ -331,7 +295,7 @@ private fun GitHubPage(vm: ChatViewModel, token: String, setToken: (String) -> U
     Note(
         "Token anlegen: github.com → Settings → Developer settings → Personal access tokens. Rechte: Contents, Pull requests, " +
             "Issues, Actions, Workflows (Lesen und Schreiben), Administration (zum Anlegen von Repos). " +
-            "Fold KI arbeitet dafür mit Gemma 4 E2B auf dem Handy – Gemma muss geladen sein. Kein weiterer Schlüssel nötig.",
+            "FA Fold KI arbeitet dafür mit dem lokalen Modell auf dem Handy – ein Modell muss geladen sein. Kein weiterer Schlüssel nötig.",
         Modifier.padding(start = 14.dp, end = 14.dp, top = 12.dp),
     )
 }
@@ -397,7 +361,7 @@ private fun SystemPage(system: String, setSystem: (String) -> Unit) {
 private fun MemoryPage(vm: ChatViewModel) {
     val mem by vm.memories.collectAsStateWithLifecycle()
     Note(
-        "Was die KI über dich weiß – gilt in allen Chats (nur Nano/Gemma, bleibt auf dem Handy). Sag im Chat z. B. „Merk dir: …“ oder „Ich heiße …“.",
+        "Was die KI über dich weiß – gilt in allen Chats (bleibt auf dem Handy). Sag im Chat z. B. „Merk dir: …“ oder „Ich heiße …“.",
         Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
     )
     if (mem.isNotEmpty()) {

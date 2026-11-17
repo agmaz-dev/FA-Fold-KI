@@ -63,7 +63,7 @@ fun BriefCard(
                 if (b.loading) Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Gemini Nano fasst zusammen…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Das lokale Modell fasst zusammen…", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 b.summary?.let { Text(it, fontSize = 15.sp, lineHeight = 22.sp) }
                 if (b.isEmpty && !b.loading) Text("Heute steht nichts an. Keine Termine, keine offenen Punkte.", fontSize = 14.sp)
