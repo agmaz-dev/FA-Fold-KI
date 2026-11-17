@@ -6,6 +6,7 @@
 
 ## FA Fold KI: lokale KI (llama.cpp, GGUF)
 - **Kein Gemini Nano, kein Gemma/LiteRT-LM, kein Claude** – entfernt (Code, Abhängigkeiten `genai-prompt`, `litertlm-android`, `anthropic-java`, Modellwahl, Einstellungen). Nicht wieder einbauen.
+- **Keine vorgefertigten Prompts (ab 1.0.1):** Im normalen Chat geht nur an das Modell, was der Nutzer tippt, plus seine eigene „Anweisungen an die KI“ (Symbol neben „Web“ im Eingabefeld des Chats, `Settings.systemPrompt`, standardmäßig leer; leer = keine Systemnachricht). Keine Persona, keine Regeltexte, kein Datum, kein Gedächtnis-Block. Entfernte Texte: `REMOVED_PROMPTS.md`. Nicht wieder einbauen. Interne Aufgaben-Prompts (Briefanalyse, Suchbegriffe, Tagesstart, GitHub-Werkzeugprotokoll) bleiben, weil die Funktionen sie brauchen.
 - Native: `app/src/main/cpp/foldki_llm.cpp` + `CMakeLists.txt` (aus Jarvis-Android, llama.cpp fest auf Tag **b12287** per FetchContent, arm64 dotprod/i8mm/KleidiAI, `c++_static`, 16-KB-Seiten). JNI: `ai/LlamaNative.kt`.
 - `ai/LlamaEngine.kt`: Kontext **8192** (Ersatz 4096/2048 bei wenig RAM), Antwort bis **4000** Tokens, Chat-Vorlage (Jinja) aus der GGUF-Datei. Interne Aufgaben (Suchbegriffe, Brief lesen, Tagesstart) ohne Nachdenken (leerer `<think></think>`-Block), Chat und GitHub mit Nachdenken.
 - `ai/ThinkParser.kt`: Text bis `</think>` = „Gedanken“ (ausklappbar über der Antwort, `ChatMessage.thoughts`), nie in PDF/Export/Vorlesen/Sprachmodus. Kein `</think>` = alles ist Antwort.

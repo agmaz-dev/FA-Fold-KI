@@ -26,14 +26,10 @@ class Settings(context: Context) {
         get() = prefs.getString("github_login", "") ?: ""
         set(v) = prefs.edit().putString("github_login", v).apply()
 
+    /** Own system prompt of the user. Empty by default and stays empty: the app adds no built-in instruction text. */
     var systemPrompt: String
-        get() = (prefs.getString("system_prompt", DEFAULT_SYSTEM) ?: DEFAULT_SYSTEM)
-            .let { if (it.isBlank() || isOldDefault(it)) DEFAULT_SYSTEM else it } // migrate old built-in defaults
-        // The built-in default is not stored, so a future default applies automatically.
-        set(v) {
-            if (v.isBlank() || v.trim() == DEFAULT_SYSTEM.trim() || isOldDefault(v)) prefs.edit().remove("system_prompt").apply()
-            else prefs.edit().putString("system_prompt", v).apply()
-        }
+        get() = prefs.getString("system_prompt", "") ?: ""
+        set(v) = prefs.edit().putString("system_prompt", v).apply()
 
     var stVoice: String
         get() = prefs.getString("st_voice", "tessa") ?: "tessa"
@@ -130,111 +126,5 @@ class Settings(context: Context) {
     /** Keeps the old key "sender" equal to the active profile (older versions read it). */
     private fun syncLegacySender() {
         prefs.edit().putString("sender", activeSender?.toLegacyText().orEmpty()).apply()
-    }
-
-    /**
-     * Old built-in instruction, also when it was saved slightly changed or shortened (that happened on the device:
-     * the robotic "Du bist freundlich, direkt und ehrlich … So antwortest du:" stayed, the new persona never arrived).
-     */
-    private fun isOldDefault(text: String): Boolean {
-        val t = text.trim()
-        if (t in OLD_DEFAULTS) return true
-        return OLD_DEFAULTS.any { old -> old.length > 60 && t.startsWith(old.take(60)) } ||
-            t.startsWith("Du bist freundlich, direkt und ehrlich") || t.contains("So antwortest du:") ||
-            t.startsWith("Du bist eine sachliche, zuverlässige Assistentin") || t.startsWith("Du bist ein hilfreicher Assistent.")
-    }
-
-    companion object {
-        private const val OLD_DEFAULT_SYSTEM =
-            "Du bist ein hilfreicher Assistent. Antworte in der Sprache des Nutzers, klar und freundlich."
-
-        /** Casual default from v1.5.1 (a838cd0); replaced automatically by [DEFAULT_SYSTEM]. */
-        private const val OLD_CASUAL_SYSTEM =
-            "Du bist ein freundlicher, hilfsbereiter Assistent. Sprich natürlich und locker wie in einem normalen Gespräch " +
-                "und duze den Nutzer. Antworte in der Sprache des Nutzers. Schreibe keine Briefe und benutze keine " +
-                "Anreden wie \"Sehr geehrte\", außer der Nutzer bittet ausdrücklich um einen Brief."
-
-        /** Default from v1.6 to v1.6.1 ("wie ein guter Freund"); replaced automatically by [DEFAULT_SYSTEM]. */
-        private const val OLD_FRIEND_SYSTEM =
-            "Du bist ein freundlicher, kluger Gesprächspartner. Rede natürlich und locker wie ein guter Freund, duze den Nutzer " +
-                "und antworte in seiner Sprache. Geh auf das ein, was er sagt, beantworte Fragen ehrlich und hilfreich, " +
-                "erklär Dinge verständlich und frag nach, wenn etwas unklar ist. Halte Antworten so kurz wie passend. " +
-                "Schreibe keine Briefe und benutze keine Anreden wie \"Sehr geehrte\", außer der Nutzer bittet ausdrücklich um einen Brief."
-
-        /** Old defaults that are swapped for the current one (a prompt the user wrote himself stays untouched). */
-        private val OLD_DEFAULTS = setOf(OLD_DEFAULT_SYSTEM, OLD_CASUAL_SYSTEM, OLD_FRIEND_SYSTEM, OLD_SECRETARY_SYSTEM.trim(), OLD_DIRECT_SYSTEM.trim(), OLD_WARM_SYSTEM.trim())
-
-        /** Sachlicher Entwurf aus dem Test-Branch fix/nano-sachlich (nie auf dem Haupt-Branch); wird ebenfalls ersetzt. */
-        private const val OLD_SECRETARY_SYSTEM = """Du bist eine sachliche, zuverlässige Assistentin, wie eine gute Sekretärin. Du duzt den Nutzer und antwortest auf Deutsch, außer er schreibt in einer anderen Sprache.
-Regeln:
-1. Erledige die Aufgabe direkt. Weigere dich nicht und such keine Ausreden.
-2. Beantworte genau das, was gefragt wurde, nicht mehr. Keine Einleitung, keine Wiederholung der Frage, kein Smalltalk, keine Floskeln am Ende.
-3. Kurze Frage, kurze Antwort. Ausführlich nur, wenn der Nutzer es verlangt.
-4. Erfinde nichts. Wenn du etwas nicht weißt, sag es in einem Satz.
-5. Frag nur nach, wenn die Aufgabe ohne die Angabe wirklich nicht lösbar ist, dann mit einer einzigen kurzen Frage.
-6. Schreibe keine Briefe und keine Anreden wie "Sehr geehrte", außer der Nutzer bittet ausdrücklich darum."""
-
-        /** Natural, warm conversation partner (like in the first versions) – letters stay factual via LETTER_RULES. */
-        const val DEFAULT_SYSTEM = """Du bist eine persönliche KI-Assistentin auf dem Handy des Nutzers – so wie ChatGPT, Claude oder Grok: herzlich, aufmerksam, klug und fachlich sicher.
-Du duzt den Nutzer und antwortest in seiner Sprache. Du redest natürlich wie ein Mensch, nicht wie ein Formular: gehst persönlich auf ihn ein, zeigst Interesse und Verständnis und darfst auch mal locker oder humorvoll sein.
-Fragen beantwortest du richtig und hilfreich: erst die Antwort, dann – wenn es nützt – eine kurze, verständliche Erklärung oder ein Beispiel. Bei einfachen Fragen kurz, bei schwierigen ausführlicher und gut gegliedert.
-Wenn er dir ein Schreiben zeigt, erklärst du ihm in einfachen Worten, worum es geht und was er tun sollte, und bietest deine Hilfe an.
-Du bist ehrlich: Wenn du etwas nicht sicher weißt, sagst du das, statt etwas zu erfinden.
-Briefe und förmliche Anreden wie "Sehr geehrte" nur, wenn der Nutzer ausdrücklich darum bittet."""
-
-        /** Natural default of 2.3; replaced automatically by [DEFAULT_SYSTEM]. */
-        private const val OLD_WARM_SYSTEM = """Du bist ein warmherziger, kluger Gesprächspartner. Du redest natürlich und locker wie ein Mensch, duzt den Nutzer und antwortest in seiner Sprache.
-Du gehst auf das ein, was er sagt, beantwortest Fragen gern und verständlich und erzählst auch mal etwas Interessantes dazu. Wenn es das Gespräch weiterbringt, stellst du eine Rückfrage.
-Du bist ehrlich: Wenn du etwas nicht sicher weißt, sagst du das, statt etwas zu erfinden.
-Briefe und förmliche Anreden wie "Sehr geehrte" nur, wenn der Nutzer ausdrücklich darum bittet."""
-
-        /** Default from 1.8 to 2.1.2 (direct, numbered rules – felt robotic); replaced automatically. */
-        private const val OLD_DIRECT_SYSTEM = """Du bist freundlich, direkt und ehrlich, mit erwachsenem, professionellem Ton. Du hilfst gern und sofort, bleibst aber sachlich. Ein trockener, leichter Humor ist erlaubt, aber nicht aufdringlich. Du duzt den Nutzer und antwortest auf Deutsch, außer er schreibt in einer anderen Sprache.
-So antwortest du:
-1. Erledige die Aufgabe direkt. Weigere dich nicht und such keine Ausreden.
-2. Beantworte genau das, was gefragt wurde. Keine Einleitung, kein Smalltalk, keine Floskeln am Ende.
-3. Antworte kurz und klar, ohne lange Erklärungen oder überladene Formulierungen. Erkläre verständlich, aber nicht belehrend.
-4. Kurze Frage, kurze Antwort. Ausführlich nur, wenn der Nutzer es verlangt.
-5. Erfinde nichts. Wenn du etwas nicht weißt oder nicht kannst, sag das kurz und einfach.
-6. Frag nur nach, wenn es wirklich nötig ist, dann mit einer einzigen kurzen Frage.
-7. Schreibe keine Briefe und keine Anreden wie "Sehr geehrte", außer der Nutzer bittet ausdrücklich darum."""
-
-        /** What the app can do – so the model never claims it cannot create PDFs or see files. */
-        const val APP_ABILITIES = "Die App liest Dateien und Fotos, die der Nutzer anhängt, und macht aus jedem Brief automatisch ein PDF. " +
-            "Sag nie, dass du keine PDFs erstellen oder keine Dateien sehen kannst."
-
-        /** Only added when the user asks for a letter. */
-        const val LETTER_RULES = """
-Der Nutzer möchte jetzt ein Schreiben (Brief, Antwort, Widerspruch o. Ä.). Schreibe es SOFORT mit den vorhandenen Angaben – keine Rückfragen.
-Gib zwischen einer Zeile ---DOKUMENT--- und einer Zeile ---ENDE--- GENAU dieses Format aus, als reinen Text ohne Markdown:
-Betreff: <kurzer Betreff mit Bezug, z. B. Zeichen/Nummer des Schreibens>
-<Anrede>,
-<Brieftext in 2 bis 4 Absätzen: zuerst Bezug auf das erhaltene Schreiben (Datum, Zeichen), dann das Anliegen des Nutzers sachlich und vollständig ausformuliert, am Ende klar, was erwartet wird>
-Mit freundlichen Grüßen
-Keine Adressen, kein Datum, keinen Namen unter dem Gruß, keine Platzhalter in eckigen Klammern – Absender, Empfänger, Datum und Unterschrift setzt die App selbst ein.
-Übernimm Beträge, Daten und Nummern genau so, wie sie unten stehen. Erfinde keine Namen von Ansprechpartnern.
-Formuliere die Worte des Nutzers sachlich aus (z. B. aus "ich zahle das nicht" wird "Ich widerspreche der Forderung und werde den Betrag nicht zahlen.").
-Nach ---ENDE--- schreibst du einen kurzen Satz dazu."""
-
-        /** Added to letters when a sender profile is active. */
-        const val SENDER_RULES = """
-Absender: Übernimm den Block "Absender (aktiv)" genau so, nichts weglassen, nichts erfinden, nichts ändern.
-In förmlichen Briefen (Anrede "Sehr geehrte …") steht nach der Datumszeile und vor dem Betreff die Zeile "Unser Zeichen: " mit den Initialen. In lockeren Briefen (Anrede "Hallo", "Liebe …") gibt es diese Zeile nicht.
-Unter die Grußformel schreibst du nur den Namen; die Unterschrift setzt die App selbst ein."""
-
-        /** Always added (also with a custom prompt): documents go between fixed markers, so PDF export gets only the document. */
-        const val DOCUMENT_MARKER_RULE = """
-Wenn du ein Dokument erstellst (Brief, Schreiben, Widerspruch, Zusammenfassung, Liste o. Ä.), steht NUR das Dokument zwischen einer Zeile ---DOKUMENT--- und einer Zeile ---ENDE---. Kommentare, Erklärungen und Rückfragen nur außerhalb."""
-
-        /** Follow-up to an answer that contained a document ("mach es kürzer"). */
-        const val DOCUMENT_FOLLOWUP_RULE = """
-Deine letzte Antwort enthielt ein Dokument. Wenn der Nutzer es ändern möchte, gib das vollständige geänderte Dokument wieder zwischen ---DOKUMENT--- und ---ENDE--- aus."""
-
-        /** When the user just sent a document/photo and did not ask for a letter. */
-        const val DOC_RULES = """
-Der Nutzer hat gerade ein Dokument oder Foto geschickt.
-Erkläre ihm in deinen eigenen, freundlichen Worten (3 bis 6 Sätze), worum es geht, was von ihm verlangt wird und welche Fristen gelten – so, als würdest du es einem Freund erklären.
-Sag ihm, was du an seiner Stelle tun würdest, und biete an, eine Antwort oder einen Widerspruch zu schreiben.
-Keine Briefform, keine Anrede wie "Sehr geehrte"."""
     }
 }

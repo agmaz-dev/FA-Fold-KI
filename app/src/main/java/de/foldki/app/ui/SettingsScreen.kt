@@ -70,7 +70,6 @@ import de.foldki.app.ChatViewModel
 import de.foldki.app.READY
 import de.foldki.app.UiState
 import de.foldki.app.ai.LocalModelManager
-import de.foldki.app.data.Settings
 import de.foldki.app.voice.Supertonic
 
 /**
@@ -79,7 +78,6 @@ import de.foldki.app.voice.Supertonic
  */
 @Composable
 fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
-    var system by remember { mutableStateOf(vm.settings.systemPrompt) }
     var ghToken by remember { mutableStateOf(vm.githubToken) }
     var rate by remember { mutableFloatStateOf(vm.settings.ttsRate) }
     var stVoice by remember { mutableStateOf(vm.settings.stVoice) }
@@ -89,7 +87,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     val stBusy by vm.stBusy.collectAsStateWithLifecycle()
     val stReady = stStatus == READY || vm.voice.isReady
 
-    fun saveAll() { vm.saveSettings(system); vm.saveVoice(stVoice, rate); vm.saveGitHubToken(ghToken) }
+    fun saveAll() { vm.saveVoice(stVoice, rate); vm.saveGitHubToken(ghToken) }
 
     editProfile?.let { id ->
         SenderProfileScreen(vm, id, onBack = { editProfile = null })
@@ -103,7 +101,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
     val title = when (page) {
         "models" -> "KI-Modelle"; "hf" -> "Hugging Face"; "github" -> "GitHub"
         "sender" -> "Absender & Unterschrift"; "voice" -> "Stimme"; "brief" -> "Tagesstart"
-        "system" -> "Systemanweisung"; "memory" -> "Gedächtnis"; "report" -> "Fehlerbericht"
+        "memory" -> "Gedächtnis"; "report" -> "Fehlerbericht"
         else -> "Einstellungen"
     }
 
@@ -123,13 +121,12 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
                         .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp),
                 ) {
                     when (page) {
-                        null -> Overview(vm, ui, ghToken, stReady, stVoice, rate, system) { page = it }
+                        null -> Overview(vm, ui, ghToken, stReady, stVoice, rate) { page = it }
                         "models" -> Group { Column(Modifier.padding(16.dp)) { ModelSettings(vm, ui, openBrowser = { page = "hf" }) } }
                                                 "github" -> GitHubPage(vm, ghToken, { ghToken = it })
                         "sender" -> Group { Column(Modifier.padding(12.dp)) { SenderProfilesList(vm, onEdit = { editProfile = it }) } }
                         "voice" -> VoicePage(vm, stStatus, stBusy, stReady, stVoice, { stVoice = it }, rate, { rate = it })
                         "brief" -> Group { Column(Modifier.padding(16.dp)) { BriefSettings(vm) } }
-                        "system" -> SystemPage(system, { system = it })
                         "memory" -> MemoryPage(vm)
                         "report" -> ReportPage(vm)
                     }
@@ -142,7 +139,7 @@ fun SettingsScreen(vm: ChatViewModel, ui: UiState, onBack: () -> Unit) {
 @Composable
 private fun Overview(
     vm: ChatViewModel, ui: UiState, ghToken: String, stReady: Boolean,
-    stVoice: String, rate: Float, system: String, open: (String) -> Unit,
+    stVoice: String, rate: Float, open: (String) -> Unit,
 ) {
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     vm.sigVersion.collectAsStateWithLifecycle().value
@@ -219,9 +216,6 @@ private fun Overview(
 
     SectionLabel("Allgemein")
     Group {
-        SettingRow("Systemanweisung", if (system.trim() == Settings.DEFAULT_SYSTEM.trim()) "Standard" else "Eigene Anweisung",
-            leading = { Tile(Icons.Default.Edit, FK.T6) }, onClick = { open("system") })
-        GroupDivider()
         SettingRow("Gedächtnis", if (mem.isEmpty()) "noch nichts gemerkt" else "${mem.size} Einträge",
             leading = { Tile(Icons.Default.Psychology, FK.T6) }, onClick = { open("memory") })
         GroupDivider()
@@ -344,16 +338,6 @@ private fun VoicePage(
     if (stReady && !stBusy) {
         Spacer(Modifier.height(14.dp))
         FkButton("Neu laden / reparieren", ghost = true) { vm.setupVoice() }
-    }
-}
-
-@Composable
-private fun SystemPage(system: String, setSystem: (String) -> Unit) {
-    Group {
-        FkField("Anweisung an die KI", system, setSystem, minLines = 8)
-        FkButton("Auf Standard zurücksetzen", Modifier.padding(start = 14.dp, end = 14.dp, bottom = 14.dp), ghost = true) {
-            setSystem(Settings.DEFAULT_SYSTEM)
-        }
     }
 }
 

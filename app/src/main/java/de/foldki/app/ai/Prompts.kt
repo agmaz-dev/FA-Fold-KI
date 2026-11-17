@@ -11,4 +11,20 @@ Erfinde nichts, keine Listen, keine Begrüßungsfloskeln, kein Markdown."""
 
     fun firstLineTerms(answer: String): String =
         answer.lines().firstOrNull { it.isNotBlank() }?.trim()?.trim('"', '.', '*')?.take(100).orEmpty()
+
+    private val CODE_MATH = Regex(
+        "```|#include|</?\\w+>|\\b(def|fun|function|class|import|return|SELECT)\\b.*[(){}:;=]|[{};]\\s*$|=>|->|==|!=|&&|\\|\\||" +
+            "\\d\\s*[+*/^=×÷]\\s*\\d|[√∑∫π]|" +
+            "\\b(code|quellcode|programmier\\w*|algorithmus|funktion|skript|script|regex|sql|python|kotlin|java(script)?|" +
+            "berechne\\w*|rechne\\w*|gleichung|beweis\\w*|ableitung|integral|wurzel|wahrscheinlichkeit|prozent\\w*)\\b",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE),
+    )
+
+    /** Thinking only when it pays off: attachments, a long question, or code/math. Short questions get a direct answer. */
+    fun wantsThinking(question: String, hasAttachments: Boolean): Boolean =
+        hasAttachments || question.length > 200 || CODE_MATH.containsMatchIn(question)
+
+    /** Messages for a chat answer: no system message when [system] is blank; [data] (files, web) goes in front of the question. */
+    fun chatMessages(system: String, earlier: List<Pair<String, String>>, data: String, question: String): List<Pair<String, String>> =
+        (if (system.isBlank()) emptyList() else listOf("system" to system)) + earlier + ("user" to (data + question))
 }

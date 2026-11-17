@@ -94,7 +94,10 @@ class LlamaEngine(context: Context) {
         awaitClose { if (job.isActive) LlamaNative.nativeStop() }
     }.flowOn(Dispatchers.Default)
 
-    /** Chat answer: system (with documents and web results), earlier turns as real messages, the question last. */
+    /**
+     * Chat answer. System message = [system] exactly as given (the user's own instruction); if blank there is no system
+     * message at all. Attached-file text and web results are plain data, put before the question in the last user turn.
+     */
     fun reply(system: String, history: List<ChatMessage>, webSearch: Boolean, onThinkOpen: (Boolean) -> Unit = {}): Flow<String> = flow {
         var web = ""
         if (webSearch) {
@@ -104,13 +107,12 @@ class LlamaEngine(context: Context) {
         }
         val turns = history.filter { !it.isError && it.text.isNotBlank() }
         val last = turns.lastOrNull { it.role == Role.USER } ?: return@flow
-        val sys = buildString {
-            append(system.trim())
+        val data = buildString {
             val docs = recentDocs(history)
-            if (docs.isNotBlank()) append("\n\nInhalt der angehängten Dateien:\n").append(docs)
+            if (docs.isNotBlank()) append(docs.trim()).append("\n\n")
             val noText = history.flatMap { it.attachments }.filter { it.text.isBlank() }
-            if (noText.isNotEmpty()) append("\n\n(Aus ${noText.joinToString { it.name }} konnte kein Text gelesen werden.)")
-            if (web.isNotBlank()) append("\n\nErgebnisse einer Internetsuche (nutze sie, nenne die Quelle):\n").append(web.take(WEB_CHARS))
+            for (a in noText) append("Angehängte Datei ").append(a.name).append(": (kein Text lesbar)\n\n")
+            if (web.isNotBlank()) append("Internetsuche:\n").append(web.take(WEB_CHARS).trim()).append("\n\n")
         }
         // Earlier turns: only answers (never the thoughts), newest kept first when the budget is tight.
         val earlier = turns.subList(0, turns.lastIndexOf(last)).takeLast(10)
@@ -123,9 +125,9 @@ class LlamaEngine(context: Context) {
             msgs.add(0, (if (m.role == Role.USER) "user" else "assistant") to t)
         }
         while (msgs.isNotEmpty() && msgs.first().first != "user") msgs.removeAt(0)
-        val all = listOf("system" to sys) + msgs + ("user" to last.text)
-        val precise = system.contains("---DOKUMENT---") || system.contains("BRIEFDATUM:")
-        generate(all, MAX_ANSWER_TOKENS, think = true, precise = precise, onThinkOpen = onThinkOpen).collect { emit(it) }
+        val all = Prompts.chatMessages(system, msgs, data, last.text)
+        val think = Prompts.wantsThinking(last.text, history.any { it.attachments.isNotEmpty() })
+        generate(all, MAX_ANSWER_TOKENS, think = think, onThinkOpen = onThinkOpen).collect { emit(it) }
     }
 
     /** Short internal task without thinking (search terms, letter reading, briefing). Returns only the answer. */
@@ -189,7 +191,7 @@ class LlamaEngine(context: Context) {
         files.forEach { a ->
             if (budget <= 0 || a.text.isBlank()) return@forEach
             val t = a.text.take(budget); budget -= t.length
-            sb.append("--- ").append(a.name).append(" ---\n").append(t).append("\n\n")
+            sb.append("Angehängte Datei ").append(a.name).append(":\n").append(t).append("\n\n")
         }
         return sb.toString()
     }

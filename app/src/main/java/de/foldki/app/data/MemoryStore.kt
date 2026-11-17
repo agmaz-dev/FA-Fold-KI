@@ -45,16 +45,5 @@ class MemoryStore(context: Context) {
             EXPLICIT.find(message)?.let { return listOf(it.groupValues[6].trim()) }
             return ABOUT_ME.findAll(message).map { it.value.trim() }.filter { it.length >= 8 }.take(3).toList()
         }
-
-        /** Block for the instruction of the on-device model. */
-        fun promptBlock(facts: List<String>, recentTopics: List<String>): String = buildString {
-            if (facts.isNotEmpty()) {
-                append("Was du über den Nutzer weißt (aus früheren Gesprächen, nutze es natürlich, ohne es aufzuzählen):\n")
-                facts.forEach { append("- ").append(it).append("\n") }
-            }
-            if (recentTopics.isNotEmpty()) {
-                append("Themen seiner letzten Gespräche mit dir: ").append(recentTopics.joinToString("; ")).append("\n")
-            }
-        }
     }
 }

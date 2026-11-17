@@ -67,9 +67,6 @@ private val GITHUB_WORDS = Regex(
 )
 
 /** Words that mean "please write me a letter". */
-/** Requests for a document other than a letter (list, summary, PDF …). */
-private val DOC_WORDS = Regex("pdf|dokument|liste|zusammenfassung|fass .* zusammen|protokoll|vertrag|lebenslauf|aufstellung|tabelle|notiz", RegexOption.IGNORE_CASE)
-
 private val LETTER_WORDS = Regex(
     "brief|antwortschreiben|gegenschreiben|widerspruch|einspruch|kündigung|anschreiben|bewerbung|mahnung|beschwerde|" +
         "ein schreiben|das schreiben|formelles schreiben|schreib (ihm|ihr|ihnen|denen|zurück)|antworte (ihm|ihr|ihnen|denen|darauf)|" +
@@ -83,13 +80,6 @@ private val REPLY_INTENT = Regex("(nicht (be)?zahl|nicht begleich|lehne .* ab|ab
 private val JUST_READ = Regex("(was steht|zusammenfass|fass .* zusammen|erklär|worum geht|was bedeutet|was heißt)", RegexOption.IGNORE_CASE)
 
 const val READY = "Sprachfunktion ist eingerichtet."
-
-private const val VOICE_LETTER_RULES = """
-Das Gespräch läuft per Sprache. Nur der Text außerhalb von ---DOKUMENT--- … ---ENDE--- wird vorgelesen: Halte ihn kurz und gesprochen."""
-
-private const val VOICE_RULES = """
-Das Gespräch läuft gerade per Sprache: Deine Antwort wird vorgelesen.
-Antworte kurz und natürlich gesprochen (meist 1 bis 4 Sätze), ohne Listen, Tabellen, Emojis oder Sonderzeichen."""
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ChatStore(app)
@@ -517,7 +507,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveSettings(system: String) {
-        settings.systemPrompt = system.ifBlank { Settings.DEFAULT_SYSTEM }
+        settings.systemPrompt = system
     }
 
     fun newChat() { stop(); _ui.update { it.copy(currentId = null) } }
@@ -562,7 +552,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val wantsLetter = (history.filter { it.role == Role.USER }.takeLast(2).map { it.text })
             .any { LETTER_WORDS.containsMatchIn(it) } || lastDoc?.isLetter == true ||
             (hasLetterInChat && REPLY_INTENT.containsMatchIn(prompt) && !JUST_READ.containsMatchIn(prompt))
-        val sentDoc = pendingFiles.isNotEmpty() && !wantsLetter
         // Long-term memory: "Merk dir …", "Ich heiße …" etc. are kept on the phone for all later chats.
         val learned = de.foldki.app.data.MemoryStore.factsIn(prompt).filter { memory.add(it) }
         if (learned.isNotEmpty()) {
@@ -579,12 +568,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // Like FA-PDF: the AI reads a new letter once (date, sender, case number, deadline, suggestions).
                 analyzeDocs(conv.id, history.flatMap { it.attachments }, engine)
                 val history = _ui.value.conversations.firstOrNull { it.id == conv.id }?.messages?.dropLast(1) ?: history
-                val system = buildSystem(wantsLetter, followUpDoc = lastDoc != null, history = history) +
-                    (if (sentDoc) Settings.DOC_RULES + "\n" else "") +
-                    (if (voice) (if (wantsLetter) VOICE_LETTER_RULES else VOICE_RULES) else "")
-                // The local model also gets the memory and the topics of the last chats (all on the phone).
-                val topics = _ui.value.conversations.filter { it.id != conv.id }.take(5).map { it.title }.filter { it.isNotBlank() }
-                val localSystem = system + "\n" + de.foldki.app.data.MemoryStore.promptBlock(memory.all(), topics)
+                // System message = only the user's own instruction (empty = none). Nothing is added by the app.
+                val localSystem = settings.systemPrompt
                 logSystem = localSystem
                 logHistory = history.size
                 if (isGitHubTask(prompt, history)) {
@@ -746,36 +731,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun ownNames(): List<String> = settings.senderProfiles.map { it.name.trim() }.filter { it.isNotEmpty() }
 
     private fun today(): String = java.text.SimpleDateFormat("dd.MM.yyyy", java.util.Locale.GERMANY).format(java.util.Date())
-
-    /** Letter rules only when the user actually asks for a letter – otherwise the AI talks normally. */
-    private fun buildSystem(letter: Boolean, followUpDoc: Boolean, history: List<ChatMessage> = emptyList()): String = buildString {
-        append(settings.systemPrompt).append("\n")
-        // Marker rule only when a document is likely asked for: small models otherwise echo "---ENDE---" into normal answers.
-        val lastAsk = history.lastOrNull { it.role == Role.USER }?.text.orEmpty()
-        if (letter || followUpDoc || DOC_WORDS.containsMatchIn(lastAsk)) append(Settings.DOCUMENT_MARKER_RULE).append("\n")
-        if (followUpDoc) append(Settings.DOCUMENT_FOLLOWUP_RULE).append("\n")
-        append("Heutiges Datum: ").append(today()).append("\n")
-        append(Settings.APP_ABILITIES).append("\n")
-        if (letter) {
-            append(Settings.LETTER_RULES).append("\n")
-            append("Datum für das neue Schreiben (heute): ").append(today()).append("\n")
-            // Data of the attached original letter, read by the app from its first page.
-            val original = history.lastOrNull { it.role == Role.USER && it.attachments.isNotEmpty() }?.attachments?.lastOrNull()
-            if (original != null) {
-                append("Datum des angehängten Schreibens: ").append(original.docDate ?: "unbekannt").append("\n")
-                append("Empfänger (aus dem Originalschreiben): ").append(original.recipient?.let { "\n$it" } ?: "unbekannt").append("\n")
-                original.refNo?.let { append("Zeichen des Originalschreibens: ").append(it).append("\n") }
-                original.subject?.let { append("Betreff des Originalschreibens: ").append(it).append("\n") }
-                original.analysis?.let { de.foldki.app.export.LetterAnalysis.parse(it) }?.let { r ->
-                    if (r.deadline.isNotBlank()) append("Frist im Originalschreiben: ").append(r.deadline).append("\n")
-                    if (r.amount.isNotBlank()) append("Betrag im Originalschreiben: ").append(r.amount).append("\n")
-                    if (r.contact.isNotBlank()) append("Ansprechpartner: ").append(r.contact).append("\n")
-                    if (r.note.isNotBlank()) append("Handschriftliche Notiz des Nutzers auf dem Schreiben: ").append(r.note).append("\n")
-                }
-            }
-            // Sender, recipient, date and signature are set by the app (LetterAnalysis.assemble), not by the model.
-        }
-    }
 
     /** Text that goes into a PDF: letters without a date line get today's date (safety net, no duplicates). */
     fun pdfText(doc: String): String = DocumentParser.ensureDateLine(doc, today(), place = settings.activeSender?.city)

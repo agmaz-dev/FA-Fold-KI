@@ -13,8 +13,8 @@ android {
         applicationId = "de.foldki.fa"
         minSdk = 26
         targetSdk = 36
-        versionCode = 39
-        versionName = "1.0"
+        versionCode = 40
+        versionName = "1.0.1"
         // Galaxy Z Fold7 and all current phones are 64-bit ARM; keeps the APK small.
         ndk { abiFilters += "arm64-v8a" }
         // llama.cpp (from Jarvis-Android): always optimised, static C++ runtime, 16 KB pages (Android 15+).

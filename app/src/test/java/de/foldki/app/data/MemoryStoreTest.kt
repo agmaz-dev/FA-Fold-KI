@@ -19,10 +19,4 @@ class MemoryStoreTest {
     @Test fun normalQuestionNothing() {
         assertTrue(MemoryStore.factsIn("Was heißt Perşembe auf Deutsch?").isEmpty())
     }
-
-    @Test fun promptBlock() {
-        val b = MemoryStore.promptBlock(listOf("Ich heiße Paula"), listOf("Widerspruch Bußgeld"))
-        assertTrue(b.contains("- Ich heiße Paula"))
-        assertTrue(b.contains("Widerspruch Bußgeld"))
-    }
 }

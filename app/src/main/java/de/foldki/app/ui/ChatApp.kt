@@ -617,6 +617,9 @@ private fun ChatScreen(
     var text by rememberSaveable { mutableStateOf("") }
     var modelOpen by remember { mutableStateOf(false) }
     var attachOpen by remember { mutableStateOf(false) }
+    // The one place for the user's own instruction to the AI (sent 1:1 as system message; empty = none).
+    var instrOpen by remember { mutableStateOf(false) }
+    var instr by remember { mutableStateOf(vm.settings.systemPrompt) }
 
     Column(Modifier.fillMaxSize().background(FK.Bg).statusBarsPadding().navigationBarsPadding().imePadding()) {
         TopBar(ui, showMenu, onMenu, sidebar, onModel = { modelOpen = true }, onNew = { vm.newChat() })
@@ -643,8 +646,14 @@ private fun ChatScreen(
             ui, vm, voice, withMic, text, { text = it }, onAttach = { attachOpen = true },
             onVoiceMode = { withMic { voice.stopSpeaking(); speakingId = null; voiceMode = true } },
             onDictate = { voice.stopSpeaking(); speakingId = null },
+            instructionsSet = instr.isNotBlank(), onInstructions = { instrOpen = true },
         )
     }
+    if (instrOpen) InstructionsDialog(
+        initial = instr,
+        onSave = { v -> vm.saveSettings(v); instr = v; instrOpen = false },
+        onDismiss = { instrOpen = false },
+    )
     if (modelOpen) ModelSheet(ui, vm, onDismiss = { modelOpen = false }, onSettings = onSettings)
     if (attachOpen) AttachSheet(vm, onDismiss = { attachOpen = false }, setPrompt = { text = it })
 }
@@ -874,11 +883,42 @@ private fun DocCard(a: Attachment, actions: MessageActions) {
 
 // ---------------------------------------------------------------- Composer (image 1 / 6)
 
+/** "Anweisungen an die KI": the user's own system instruction, empty by default. Sent as the system message exactly as typed. */
+@Composable
+private fun InstructionsDialog(initial: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var value by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = FK.Surface,
+        title = { Text("Anweisungen an die KI", color = FK.Text, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column {
+                Text("Gilt für alle Chats und wird genau so als Systemanweisung gesendet. Leer = keine Anweisung.", fontSize = 13.sp, color = FK.Muted)
+                Spacer(Modifier.height(10.dp))
+                FkField("Anweisung an die KI", value, { value = it }, minLines = 6, modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState()))
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(value) }, modifier = Modifier.heightIn(min = 48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = FK.Accent, contentColor = FK.OnAccent),
+            ) { Text("Speichern", fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = {
+            Row {
+                if (value.isNotEmpty()) TextButton(onClick = { value = "" }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Leeren", color = FK.Muted) }
+                TextButton(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Abbrechen", color = FK.Muted) }
+            }
+        },
+    )
+}
+
 @Composable
 private fun InputBar(
     ui: UiState, vm: ChatViewModel, voice: VoiceController,
     withMic: (() -> Unit) -> Unit, text: String, setText: (String) -> Unit, onAttach: () -> Unit,
     onVoiceMode: () -> Unit, onDictate: () -> Unit = {},
+    instructionsSet: Boolean = false, onInstructions: () -> Unit = {},
 ) {
     var dictating by remember { mutableStateOf(false) }
     val listenPhase by voice.listenPhase.collectAsState()
@@ -976,6 +1016,9 @@ private fun InputBar(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 RoundOutline(onAttach) { Icon(Icons.Default.Add, "Hinzufügen", tint = FK.Muted, modifier = Modifier.size(20.dp)) }
                 FkChip("Web", Icons.Default.Language, active = ui.webSearch, onClick = vm::toggleWeb)
+                RoundOutline(onInstructions) {
+                    Icon(Icons.AutoMirrored.Filled.Notes, "Anweisungen an die KI", tint = if (instructionsSet) FK.Accent else FK.Muted, modifier = Modifier.size(20.dp))
+                }
                 Spacer(Modifier.weight(1f))
                 if (!ui.generating) RoundOutline(dictate) {
                     if (recognizing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = FK.Accent)

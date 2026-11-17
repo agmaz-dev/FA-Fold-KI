@@ -19,7 +19,7 @@ class LocalGitHubAgent(private val llm: LlamaEngine, token: String) {
         private const val RESULT_CHARS = 2500 // 8192 tokens of context incl. thinking: keep each result short
 
         fun system(base: String): String = buildString {
-            append(base.trim().take(600)).append("\n\n")
+            if (base.isNotBlank()) append(base.trim().take(600)).append("\n\n")
             append(
                 """
 Du hast Zugang zum GitHub-Konto des Nutzers über Werkzeuge. So benutzt du ein Werkzeug:
