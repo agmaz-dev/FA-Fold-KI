@@ -169,6 +169,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private fun llmCrashCheck(): String? {
         if (!settings.llmLoading) return null
         settings.llmLoading = false
+        if (settings.llmAttemptGpu > 0 && settings.gpuPercent > 0) {
+            // Absturz mit GPU: GPU ausschalten, das Modell bleibt nutzbar (dann nur mit dem Prozessor wie bisher)
+            settings.gpuPercent = 0
+            return "Die App wurde mit GPU-Beschleunigung beendet – GPU-Anteil auf 0 % gestellt (Einstellungen → KI-Modelle)"
+        }
         settings.llmCrashed = settings.llmAttempt
         return "Das Modell hat die App beendet (zu wenig Arbeitsspeicher?) – bitte unter Einstellungen → KI-Modelle prüfen"
     }
@@ -191,6 +196,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         models.delete(file)
     }
     fun clearModelError() = models.clearError()
+
+    /** GPU share in percent (0 = CPU only). Takes effect with the next question (the model is then reloaded). */
+    fun setGpuPercent(v: Int) { settings.gpuPercent = v }
+    /** Where the loaded model runs, e.g. "GPU (Adreno 830): 27 von 36 Schichten"; "" before the first load. */
+    fun backendInfo(): String = llm.backendInfo()
 
     // ---- Long-term memory (on-device only) ----
     val memory = de.foldki.app.data.MemoryStore(app)
@@ -261,7 +271,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Android is short of memory (app in the background): also free the speech recognition model. */
     fun onLowMemory() { voice.trimMemory() }
 
-    private fun llmBegin() { if (llmBusy.incrementAndGet() == 1) { settings.llmAttempt = models.active.value.orEmpty(); settings.llmLoading = true } }
+    private fun llmBegin() { if (llmBusy.incrementAndGet() == 1) { settings.llmAttempt = models.active.value.orEmpty(); settings.llmAttemptGpu = settings.gpuPercent; settings.llmLoading = true } }
     private fun llmEnd() { if (llmBusy.decrementAndGet() <= 0) { llmBusy.set(0); settings.llmLoading = false } }
 
     private fun scheduleIdleUnload() {
@@ -279,14 +289,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     /** Loads the chosen model if needed (max. 120 s). Returns null if ready, else the reason (German). */
     private suspend fun ensureLoaded(): String? {
         val f = models.activeFile ?: return noModelText()
-        if (llm.loadedPath == f.absolutePath) return null
+        if (llm.loadedPath == f.absolutePath && llm.loadedGpu == settings.gpuPercent) return null
         if (settings.llmCrashed == f.name) return "Dieses Modell hat die App beim letzten Mal beendet (zu wenig Arbeitsspeicher?). " +
             "Wähle es unter Einstellungen → KI-Modelle erneut aus, um es nochmal zu versuchen, oder nimm ein kleineres Modell."
         if (tooHot()) return "Das Handy ist gerade zu heiß. Bitte kurz warten und nochmal fragen."
         val ramGb = models.totalRam() / 1e9
         if (ramGb > 0 && de.foldki.app.ai.HfModels.tooBigFor(models.totalRam(), f.length()))
             de.foldki.app.data.DebugLog.write("Warnung: Modell ${f.name} (${LocalModelManager.gb(f.length())}) ist groß für $ramGb GB RAM")
-        val d = llm.loadAsync(f.absolutePath)
+        val d = llm.loadAsync(f.absolutePath, settings.gpuPercent)
         llmBegin(); d.invokeOnCompletion { llmEnd() } // stays guarded until the native load really ends
         return try {
             withTimeoutOrNull(120_000) { d.await() } ?: run {
@@ -686,6 +696,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val end = ThinkParser.split(raw.toString(), open.get(), finished = true)
                     editMessage(conv.id, botMsg.id) { it.copy(text = end.answer, thoughts = end.thoughts) }
                     de.foldki.app.data.DebugLog.write("Lokal Statistik: ${llm.lastStats}")
+                    // Token-Anzahl und Antwortzeit unter der Antwort (Zeit = vom Fragen bis die Antwort fertig ist)
+                    runCatching {
+                        val st = org.json.JSONObject(llm.lastStats)
+                        val gen = st.optInt("gen")
+                        val tGen = st.optLong("t_gen")
+                        if (gen > 0) editMessage(conv.id, botMsg.id) {
+                            it.copy(
+                                tokens = gen, answerMs = System.currentTimeMillis() - t0,
+                                tokPerSec = if (tGen > 0) gen * 1000f / tGen else 0f,
+                            )
+                        }
+                    }
                 }
                 _ui.update { it.copy(thinking = false) }
                 if (problem != null) editMessage(conv.id, botMsg.id) { it.copy(text = problem) }

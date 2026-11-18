@@ -12,7 +12,12 @@ object LlamaNative {
         runCatching { System.loadLibrary("foldki_llm") }.onFailure { loadError = it.message ?: it.javaClass.simpleName }.isSuccess
     }
 
-    @JvmStatic external fun nativeLoad(path: String, nCtx: Int, nThreads: Int): Boolean
+    /** Loads the compute parts (CPU, GPU via OpenCL) once; without OpenCL on the phone only the CPU part is there. */
+    @JvmStatic external fun nativeInit(nativeLibDir: String)
+    /** gpuPercent: share of the model layers on the GPU (0 = CPU only). Falls back to CPU only if the GPU fails. */
+    @JvmStatic external fun nativeLoad(path: String, nCtx: Int, nThreads: Int, gpuPercent: Int): Boolean
+    /** Short German text: GPU name and how many layers run on it, or "Nur Prozessor …". */
+    @JvmStatic external fun nativeBackendInfo(): String
     @JvmStatic external fun nativeError(): String
     @JvmStatic external fun nativeContextSize(): Int
     @JvmStatic external fun nativeThinkOpen(): Boolean

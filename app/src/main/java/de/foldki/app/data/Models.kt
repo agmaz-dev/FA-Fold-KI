@@ -41,6 +41,12 @@ data class ChatMessage(
     val thoughts: String = "",
     /** Name of the local model that wrote this answer. */
     val model: String? = null,
+    /** Generated tokens of this answer (thinking included); 0 = unknown. Shown small under the answer, never exported. */
+    val tokens: Int = 0,
+    /** Answer time in milliseconds from asking until the answer was complete; 0 = unknown. */
+    val answerMs: Long = 0,
+    /** Pure writing speed of the model (tokens per second); 0 = unknown. */
+    val tokPerSec: Float = 0f,
 )
 
 data class Conversation(

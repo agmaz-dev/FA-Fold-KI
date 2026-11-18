@@ -16,11 +16,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,6 +64,7 @@ fun ModelSettings(vm: ChatViewModel, ui: UiState, openBrowser: () -> Unit) {
             "Läuft nur auf dem Handy. Ins Internet gehen nur der Hugging-Face-Browser und der Download des Modells.",
             fontSize = 12.sp, color = muted,
         )
+        GpuShare(vm)
         when (st) {
             is State.Downloading -> {
                 Text("Lädt ${HfModels.displayName(st.name)}… ${st.pct} % (${LocalModelManager.gb(st.bytes)} von ${LocalModelManager.gb(st.total)})", fontSize = 13.sp)
@@ -144,6 +148,34 @@ fun ModelSettings(vm: ChatViewModel, ui: UiState, openBrowser: () -> Unit) {
         )
     }
     bigWarning?.let { f -> BigModelWarning(f, ram, onDismiss = { bigWarning = null }) { bigWarning = null; vm.downloadModel(f) } }
+}
+
+/**
+ * GPU share (OpenCL on the Adreno GPU): percent of the model layers computed on the GPU, 0 % = CPU only.
+ * Start value 75 %. Takes effect with the next question (the model is reloaded). If the GPU fails, the model
+ * runs on the CPU as before; if the app crashes with the GPU, the share is set to 0 % automatically.
+ */
+@Composable
+private fun GpuShare(vm: ChatViewModel) {
+    var pct by remember { mutableIntStateOf(vm.settings.gpuPercent) }
+    val info = remember(pct) { vm.backendInfo() }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(Modifier.fillMaxWidth()) {
+        Text("GPU-Beschleunigung: ${if (pct == 0) "aus (nur Prozessor)" else "$pct % der Schichten"}", fontSize = 14.sp)
+        Slider(
+            value = pct.toFloat(), onValueChange = { pct = (Math.round(it / 5f) * 5).coerceIn(0, 100) },
+            onValueChangeFinished = { vm.setGpuPercent(pct) },
+            valueRange = 0f..100f, steps = 19,
+            colors = SliderDefaults.colors(thumbColor = FK.Accent, activeTrackColor = FK.Accent, inactiveTrackColor = FK.Line),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        )
+        Text(
+            "Rechnet einen Teil des Modells auf der Grafik (OpenCL). Gilt ab der nächsten Frage. Klappt die GPU nicht, " +
+                "läuft das Modell wie bisher auf dem Prozessor.",
+            fontSize = 12.sp, color = muted,
+        )
+        if (info.isNotBlank()) Text("Zuletzt: $info", fontSize = 12.sp, color = muted)
+    }
 }
 
 /** Warning before a model that is probably too big for the phone's RAM (Galaxy Z Fold 7: 12 GB). */

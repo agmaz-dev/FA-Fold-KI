@@ -76,6 +76,16 @@ class Settings(context: Context) {
         get() = prefs.getString("llm_attempt", "") ?: ""
         set(v) { prefs.edit().putString("llm_attempt", v).commit() }
 
+    /** Share of the model layers on the GPU (OpenCL, Adreno) in percent; 0 = CPU only. Start value 75 %. */
+    var gpuPercent: Int
+        get() = prefs.getInt("gpu_percent", 75).coerceIn(0, 100)
+        set(v) = prefs.edit().putInt("gpu_percent", v.coerceIn(0, 100)).apply()
+
+    /** GPU share used by the load/answer in [llmAttempt] (crash guard: a GPU crash switches the GPU off). */
+    var llmAttemptGpu: Int
+        get() = prefs.getInt("llm_attempt_gpu", 0)
+        set(v) { prefs.edit().putInt("llm_attempt_gpu", v).commit() }
+
     /** Model file that crashed the app (not loaded automatically again until the user picks it). */
     var llmCrashed: String
         get() = prefs.getString("llm_crashed", "") ?: ""

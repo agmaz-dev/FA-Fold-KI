@@ -16,6 +16,8 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.FoldKI">
+        <!-- GPU (Adreno) für das lokale Modell: OpenCL-Bibliothek des Herstellers freigeben (Android 12+). Nicht nötig: fehlt sie, rechnet der Prozessor. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

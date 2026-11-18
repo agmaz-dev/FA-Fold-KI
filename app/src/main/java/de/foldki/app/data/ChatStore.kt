@@ -32,6 +32,9 @@ class ChatStore(context: Context) {
                             localOnly = m.optBoolean("localOnly"),
                             thoughts = m.optString("thoughts"),
                             model = m.optString("model").ifEmpty { null },
+                            tokens = m.optInt("tokens"),
+                            answerMs = m.optLong("answerMs"),
+                            tokPerSec = m.optDouble("tokPerSec", 0.0).toFloat(),
                             attachments = m.optJSONArray("attachments")?.let { a ->
                                 (0 until a.length()).map { k ->
                                     val x = a.getJSONObject(k)
@@ -70,6 +73,7 @@ class ChatStore(context: Context) {
                     put("engine", m.engine?.name ?: ""); put("isError", m.isError); put("web", m.web); put("localOnly", m.localOnly)
                     if (m.thoughts.isNotEmpty()) put("thoughts", m.thoughts)
                     m.model?.let { put("model", it) }
+                    if (m.tokens > 0) { put("tokens", m.tokens); put("answerMs", m.answerMs); put("tokPerSec", m.tokPerSec.toDouble()) }
                     put("attachments", JSONArray().apply {
                         m.attachments.forEach { a ->
                             put(JSONObject().apply {

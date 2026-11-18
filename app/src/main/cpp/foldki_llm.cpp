@@ -13,6 +13,8 @@
 #include "llama.h"
 #include "chat.h"
 #include "common.h"
+#include "ggml-backend.h"
+#include "gguf.h"
 
 static llama_model *g_model = nullptr;
 static llama_context *g_ctx = nullptr;
@@ -22,6 +24,9 @@ static std::atomic<bool> g_stop{false};
 static std::atomic<bool> g_think_open{false};   // Vorlage endet mit <think>: Ausgabe beginnt mit Gedanken
 static std::mutex g_mu;
 static std::string g_err;
+static std::string g_backend_info;   // z. B. "GPU (QUALCOMM Adreno(TM) 830): 27 von 36 Schichten"
+static std::mutex g_info_mu;          // eigenes Schloss: die Anzeige darf nicht auf eine laufende Antwort warten
+static bool g_backends_loaded = false;
 
 static void free_all() {
     if (g_ctx) { llama_free(g_ctx); g_ctx = nullptr; }
@@ -68,17 +73,80 @@ static std::string cpu_flags() {
     return out.empty() ? "basic" : out;
 }
 
+// Rechenteile laden (libggml-cpu.so, libggml-opencl.so). Fehlt OpenCL auf dem Gerät, bleibt nur der Prozessor.
+static void load_backends(const std::string &libDir) {
+    if (g_backends_loaded) return;
+    if (!libDir.empty()) ggml_backend_load_all_from_path(libDir.c_str());
+    // Ersatz, falls die Bibliotheken nicht entpackt im Ordner liegen: über den Namen direkt aus der APK
+    if (!ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU)) ggml_backend_load("libggml-cpu.so");
+    if (!ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU)) ggml_backend_load("libggml-opencl.so");
+    llama_backend_init();
+    g_backends_loaded = true;
+}
+
+static const char *gpu_name() {
+    ggml_backend_dev_t d = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
+    return d ? ggml_backend_dev_description(d) : nullptr;
+}
+
+// Anzahl der Schichten aus der GGUF-Datei ("<arch>.block_count"), ohne das Modell zu laden. 0 = unbekannt.
+static int gguf_layers(const std::string &path) {
+    gguf_init_params gp = {/*no_alloc*/ true, /*ctx*/ nullptr};
+    gguf_context *g = gguf_init_from_file(path.c_str(), gp);
+    if (!g) return 0;
+    int n = 0;
+    int64_t ka = gguf_find_key(g, "general.architecture");
+    if (ka >= 0) {
+        std::string key = std::string(gguf_get_val_str(g, ka)) + ".block_count";
+        int64_t kb = gguf_find_key(g, key.c_str());
+        if (kb >= 0) n = (int) gguf_get_val_u32(g, kb);
+    }
+    gguf_free(g);
+    return n;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_de_foldki_app_ai_LlamaNative_nativeInit(JNIEnv *env, jclass, jstring jdir) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    load_backends(jstr(env, jdir));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_de_foldki_app_ai_LlamaNative_nativeBackendInfo(JNIEnv *env, jclass) {
+    std::string s;
+    { std::lock_guard<std::mutex> lk(g_info_mu); s = g_backend_info; }
+    if (s.empty() && g_backends_loaded) { const char *g = gpu_name(); s = g ? std::string("GPU gefunden: ") + g : "Keine GPU (OpenCL) gefunden – nur Prozessor"; }
+    return env->NewStringUTF(s.c_str());
+}
+
+// gpuPercent: Anteil der Schichten auf der GPU (0 = nur Prozessor, 100 = alles). Klappt das Laden mit GPU nicht,
+// wird automatisch nur mit dem Prozessor geladen.
 extern "C" JNIEXPORT jboolean JNICALL
-Java_de_foldki_app_ai_LlamaNative_nativeLoad(JNIEnv *env, jclass, jstring jpath, jint nCtx, jint nThreads) {
+Java_de_foldki_app_ai_LlamaNative_nativeLoad(JNIEnv *env, jclass, jstring jpath, jint nCtx, jint nThreads, jint gpuPercent) {
     std::lock_guard<std::mutex> lk(g_mu);
     free_all();
     g_err.clear();
-    static bool backend = false;
-    if (!backend) { llama_backend_init(); backend = true; }
+    { std::lock_guard<std::mutex> il(g_info_mu); g_backend_info.clear(); }
+    load_backends("");
     std::string path = jstr(env, jpath);
+    const char *gpu = gpu_name();
+    int layers = gguf_layers(path);
+    int pct = std::max(0, std::min(100, (int) gpuPercent));
+    int ngl = 0;
+    if (gpu && pct > 0) {
+        if (layers <= 0) ngl = pct >= 100 ? 999 : 0;   // Schichtzahl unbekannt: nur bei 100 % auf die GPU
+        else if (pct >= 100) ngl = layers + 1;          // + Ausgabeschicht
+        else ngl = std::max(1, (int) ((layers * pct + 50) / 100));
+    }
     llama_model_params mp = llama_model_default_params();
-    mp.n_gpu_layers = 0;
+    mp.n_gpu_layers = ngl;
     g_model = llama_model_load_from_file(path.c_str(), mp);
+    if (!g_model && ngl > 0) {
+        // GPU hat nicht geklappt: wie bisher nur mit dem Prozessor
+        ngl = 0;
+        mp.n_gpu_layers = 0;
+        g_model = llama_model_load_from_file(path.c_str(), mp);
+    }
     if (!g_model) { g_err = "Modell konnte nicht geladen werden (Datei defekt, kein GGUF oder zu wenig Arbeitsspeicher)."; return JNI_FALSE; }
     llama_context_params cp = llama_context_default_params();
     cp.n_ctx = nCtx > 0 ? nCtx : 8192;
@@ -102,7 +170,31 @@ Java_de_foldki_app_ai_LlamaNative_nativeLoad(JNIEnv *env, jclass, jstring jpath,
         cp.n_ctx = 2048;
         g_ctx = llama_init_from_model(g_model, cp);
     }
+    if (!g_ctx && ngl > 0) {
+        // Kein Kontext mit GPU: Modell nur für den Prozessor neu laden
+        llama_model_free(g_model);
+        ngl = 0;
+        mp.n_gpu_layers = 0;
+        g_model = llama_model_load_from_file(path.c_str(), mp);
+        if (g_model) {
+            cp.type_k = GGML_TYPE_Q8_0; cp.type_v = GGML_TYPE_Q8_0; cp.n_ctx = nCtx > 0 ? nCtx : 8192;
+            g_ctx = llama_init_from_model(g_model, cp);
+            if (!g_ctx) { cp.type_k = GGML_TYPE_F16; cp.type_v = GGML_TYPE_F16; cp.n_ctx = 4096; g_ctx = llama_init_from_model(g_model, cp); }
+            if (!g_ctx) { cp.n_ctx = 2048; g_ctx = llama_init_from_model(g_model, cp); }
+        }
+    }
     if (!g_ctx) { g_err = "Zu wenig Arbeitsspeicher für dieses Modell."; free_all(); return JNI_FALSE; }
+    {
+        int total = layers > 0 ? layers : (int) llama_model_n_layer(g_model);
+        int on_gpu = std::min(ngl, total);
+        char info[256];
+        if (on_gpu > 0) snprintf(info, sizeof(info), "GPU (%s): %d von %d Schichten", gpu, on_gpu, total);
+        else if (gpu && pct > 0) snprintf(info, sizeof(info), "Nur Prozessor (GPU %s ließ sich nicht nutzen)", gpu);
+        else if (gpu) snprintf(info, sizeof(info), "Nur Prozessor (GPU %s ist ausgeschaltet)", gpu);
+        else snprintf(info, sizeof(info), "Nur Prozessor (keine GPU über OpenCL gefunden)");
+        std::lock_guard<std::mutex> il(g_info_mu);
+        g_backend_info = info;
+    }
     try {
         g_tmpl = common_chat_templates_init(g_model, "");
     } catch (...) {
@@ -244,6 +336,7 @@ Java_de_foldki_app_ai_LlamaNative_nativeGenerate(JNIEnv *env, jclass, jobjectArr
 
     std::string pending;
     int generated = 0;
+    int64_t t_first = 0;   // Zeitpunkt des ersten Antwort-Tokens
     bool cut = false;
     // Denk-Budget: zählt Tokens, solange der Denkblock offen ist (nur wenn die Ausgabe mit Gedanken beginnt)
     bool think_done = !g_think_open.load();
@@ -253,6 +346,7 @@ Java_de_foldki_app_ai_LlamaNative_nativeGenerate(JNIEnv *env, jclass, jobjectArr
     for (int i = 0; !g_stop; i++) {
         if (i >= limit) { cut = true; break; }
         llama_token t = llama_sampler_sample(smpl, g_ctx, -1);
+        if (t_first == 0) t_first = ggml_time_us();
         if (llama_vocab_is_eog(vocab, t)) break;
         char buf[256];
         int len = llama_token_to_piece(vocab, t, buf, sizeof(buf), 0, false);
@@ -302,9 +396,9 @@ Java_de_foldki_app_ai_LlamaNative_nativeGenerate(JNIEnv *env, jclass, jobjectArr
     const int64_t t2 = ggml_time_us();
     char stats[700];
     snprintf(stats, sizeof(stats),
-             "{\"prompt\":%d,\"reused\":%d,\"t_prompt\":%lld,\"gen\":%d,\"t_gen\":%lld,\"limit\":%d,\"cut\":%s,\"ctx\":%d,\"tmpl\":%s,\"think_open\":%s,\"think_cut\":%s,\"threads\":%d,\"cpu\":\"%s\"}",
+             "{\"prompt\":%d,\"reused\":%d,\"t_prompt\":%lld,\"gen\":%d,\"t_gen\":%lld,\"limit\":%d,\"cut\":%s,\"ctx\":%d,\"tmpl\":%s,\"think_open\":%s,\"think_cut\":%s,\"threads\":%d,\"cpu\":\"%s\",\"t_first\":%lld}",
              (int) toks.size(), (int) reused, (long long) ((t1 - t0) / 1000), generated, (long long) ((t2 - t1) / 1000),
              limit, cut ? "true" : "false", n_ctx, templ_ok ? "true" : "false", g_think_open ? "true" : "false", think_cut ? "true" : "false",
-             (int) llama_n_threads(g_ctx), cpu_flags().c_str());
+             (int) llama_n_threads(g_ctx), cpu_flags().c_str(), (long long) (t_first > 0 ? (t_first - t0) / 1000 : -1));
     return env->NewStringUTF(stats);
 }

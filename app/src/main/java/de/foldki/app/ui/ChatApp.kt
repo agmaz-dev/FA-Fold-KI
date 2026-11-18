@@ -804,6 +804,7 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
                 if (parts.after.isNotBlank()) AnswerText(textColor, DocumentParser.clean(parts.after))
             }
             m.attachments.forEach { a -> DocCard(a, actions) }
+            if (!typing && m.tokens > 0) AnswerStats(m)
             if (!typing && !m.isError && m.text.isNotBlank()) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp).offset(x = (-10).dp)) {
                     SmallAction(Icons.Default.ContentCopy, "Kopieren") { actions.copy(clean) }
@@ -816,6 +817,21 @@ private fun MessageRow(m: ChatMessage, typing: Boolean, actions: MessageActions)
             }
         }
     }
+}
+
+/** Small line under an answer: tokens, answer time, writing speed (only shown, never exported or spoken). */
+@Composable
+private fun AnswerStats(m: ChatMessage) {
+    val de = java.util.Locale.GERMANY
+    val parts = buildList {
+        add("%,d Tokens".format(de, m.tokens))
+        if (m.answerMs > 0) add("%.1f s".format(de, m.answerMs / 1000.0))
+        if (m.tokPerSec > 0f) add("%.1f Tokens/s".format(de, m.tokPerSec))
+    }
+    Text(
+        parts.joinToString(" · "), fontSize = 11.sp, color = FK.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.padding(top = 6.dp),
+    )
 }
 
 /** "Gedanken" of a thinking model: collapsed by default, tap to expand (only shown, never exported or spoken). */

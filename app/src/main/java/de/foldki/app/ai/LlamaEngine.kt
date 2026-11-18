@@ -33,6 +33,10 @@ class LlamaEngine(context: Context) {
         private set
     @Volatile var contextSize: Int = 0
         private set
+    /** GPU share (percent) the loaded model was loaded with; another value reloads it. */
+    @Volatile var loadedGpu: Int = -1
+        private set
+    private var backendsReady = false
     /** JSON stats of the last generation (tokens, speed, …) for the error report. */
     @Volatile var lastStats: String = ""
         private set
@@ -54,20 +58,22 @@ class LlamaEngine(context: Context) {
     }
 
     /** Loads [path] (once; another path replaces the loaded model). Throws with a German message on failure. */
-    fun loadAsync(path: String): Deferred<Unit> = synchronized(this) {
+    fun loadAsync(path: String, gpuPercent: Int = 0): Deferred<Unit> = synchronized(this) {
         loading?.takeIf { it.isActive }?.let { return it }
         loadScope.async {
             loadMutex.withLock {
-                if (loadedPath == path) return@withLock
+                if (loadedPath == path && loadedGpu == gpuPercent) return@withLock
                 if (!LlamaNative.available) throw IllegalStateException("llama.cpp fehlt in dieser APK: ${LlamaNative.loadError}")
+                if (!backendsReady) { LlamaNative.nativeInit(app.applicationInfo.nativeLibraryDir.orEmpty()); backendsReady = true }
                 genMutex.withLock {
-                    if (loadedPath != null) { LlamaNative.nativeUnload(); loadedPath = null }
+                    if (loadedPath != null) { LlamaNative.nativeUnload(); loadedPath = null; loadedGpu = -1 }
                     val threads = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
-                    if (!LlamaNative.nativeLoad(path, N_CTX, threads)) {
+                    if (!LlamaNative.nativeLoad(path, N_CTX, threads, gpuPercent.coerceIn(0, 100))) {
                         throw IllegalStateException(LlamaNative.nativeError().ifBlank { "Modell konnte nicht geladen werden." })
                     }
                     contextSize = LlamaNative.nativeContextSize()
                     loadedPath = path
+                    loadedGpu = gpuPercent
                 }
             }
         }.also { loading = it }
@@ -210,13 +216,16 @@ class LlamaEngine(context: Context) {
 
     fun stop() { if (isLoaded) runCatching { LlamaNative.nativeStop() } }
 
+    /** Where the model runs (GPU name + layers, or CPU only); "" before the first load. */
+    fun backendInfo(): String = if (backendsReady) runCatching { LlamaNative.nativeBackendInfo() }.getOrDefault("") else ""
+
     /** Frees the model memory. Safe to call any time (waits for a running answer to stop). */
     fun close() {
         synchronized(this) { loading?.cancel(); loading = null }
         if (loadedPath == null) return
         loadScope.launch {
             runCatching { LlamaNative.nativeStop() }
-            genMutex.withLock { runCatching { LlamaNative.nativeUnload() }; loadedPath = null; contextSize = 0 }
+            genMutex.withLock { runCatching { LlamaNative.nativeUnload() }; loadedPath = null; loadedGpu = -1; contextSize = 0 }
         }
     }
 }
