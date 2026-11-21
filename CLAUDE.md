@@ -38,6 +38,7 @@
 
 ## Allgemein
 - Antworten und App-Texte auf Deutsch.
+- **Datenschutz: Niemals echte persönliche Daten des Nutzers in Code, Tests, Kommentare, Commit-Nachrichten oder Doku.** Für Tests nur Musterdaten (z. B. „Paula Fischer, Lindenallee 18, 14612 Falkensee“). Der Verlauf wurde am 21.11.2026 bereinigt.
 
 ## On-Device-Funktionen
 - Einzige KI: das gewählte GGUF-Modell (`ai/LlamaEngine.kt`). Bei Absturz beim Laden wird das Modell gesperrt, bis der Nutzer es wieder auswählt (`Settings.llmCrashed`).
